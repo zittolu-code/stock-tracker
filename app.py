@@ -6,8 +6,13 @@ st.set_page_config(page_title="Stock Value Tracker", layout="wide")
 
 st.title("📈 Prossimi Ingressi - Stock Value Tracker")
 
-# Elenco Ticker
-tickers = ["NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", "MA"]
+# Tutti i 29 Ticker della tabella originale
+TICKERS = [
+    "NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", 
+    "MA", "PLTR", "SAP", "CRM", "ISRG", "NOW", "MELI", "RACE", "O", 
+    "OKE", "NBIS", "CRWV", "CMG", "LDO.MI", "CRCL", "LYSCF", "IREN", 
+    "TYL", "FIG", "MARA"
+]
 
 if st.button("🔄 Aggiorna Dati Live"):
     st.cache_data.clear()
@@ -21,43 +26,51 @@ def fetch_data(ticker_list):
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # Estrazione dati con valori di fallback
-            price = info.get("currentPrice") or info.get("regularMarketPrice") or "N/A"
-            eps = info.get("trailingEps") or "N/A"
-            pe = info.get("trailingPE") or "N/A"
-            market_cap = info.get("marketCap") or "N/A"
-            fcf = info.get("freeCashflow") or "N/A"
+            # Estrazione dei dati in formato NUMERICO (senza $ o stringhe)
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            eps = info.get("trailingEps")
+            pe = info.get("trailingPE")
+            market_cap = info.get("marketCap")
+            fcf = info.get("freeCashflow")
             
-            # Formattazione
-            price_str = f"${price:,.2f}" if isinstance(price, (int, float)) else "N/A"
-            eps_str = f"${eps:,.2f}" if isinstance(eps, (int, float)) else "N/A"
-            pe_str = f"{pe:.2f}" if isinstance(pe, (int, float)) else "N/A"
-            mc_str = f"${market_cap / 1e9:,.2f} B" if isinstance(market_cap, (int, float)) else "N/A"
-            fcf_str = f"${fcf / 1e9:,.2f} B" if isinstance(fcf, (int, float)) else "N/A"
+            # Convertiamo in miliardi per renderli leggibili mantenendo il valore numerico
+            mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
+            fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
             
             data_list.append({
-                "Azienda": ticker,
+                "Azienda": info.get("shortName", ticker),
                 "Ticker": ticker,
-                "Prezzo": price_str,
-                "EPS": eps_str,
-                "P/E": pe_str,
-                "Market Cap": mc_str,
-                "Free Cash Flow": fcf_str
+                "Prezzo ($)": price if isinstance(price, (int, float)) else None,
+                "EPS ($)": eps if isinstance(eps, (int, float)) else None,
+                "P/E": pe if isinstance(pe, (int, float)) else None,
+                "Market Cap ($B)": mc_billion,
+                "Free Cash Flow ($B)": fcf_billion
             })
-        except Exception as e:
+        except Exception:
             data_list.append({
                 "Azienda": ticker,
                 "Ticker": ticker,
-                "Prezzo": "N/A",
-                "EPS": "N/A",
-                "P/E": "N/A",
-                "Market Cap": "N/A",
-                "Free Cash Flow": "N/A"
+                "Prezzo ($)": None,
+                "EPS ($)": None,
+                "P/E": None,
+                "Market Cap ($B)": None,
+                "Free Cash Flow ($B)": None
             })
             
     return pd.DataFrame(data_list)
 
 with st.spinner("Recupero dati in corso da Yahoo Finance..."):
-    df = fetch_data(tickers)
+    df = fetch_data(TICKERS)
 
-st.dataframe(df, use_container_width=True)
+# Configurazione delle colonne per ordinare come NUMERI e mostrare il formato corretto
+st.dataframe(
+    df,
+    use_container_width=True,
+    column_config={
+        "Prezzo ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "EPS ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "P/E": st.column_config.NumberColumn(format="%.2f"),
+        "Market Cap ($B)": st.column_config.NumberColumn(format="$%.2f B"),
+        "Free Cash Flow ($B)": st.column_config.NumberColumn(format="$%.2f B"),
+    }
+)

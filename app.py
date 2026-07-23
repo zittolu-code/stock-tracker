@@ -4,7 +4,7 @@ import pandas as pd
 
 st.set_page_config(page_title="Stock Value Tracker", layout="wide")
 
-st.title("📈 Prossimi Ingressi - Stock Value Tracker")
+st.title("📈 Stock Value Tracker")
 
 # Tutti i 29 Ticker della tabella originale
 TICKERS = [

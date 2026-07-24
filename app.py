@@ -110,8 +110,8 @@ def highlight_fcf_ratio(val):
     else:
         return 'background-color: #c62828; color: white; font-weight: bold;'
 
-# Applicazione dello stile e visualizzazione della tabella
-styled_df = df.style.applymap(highlight_fcf_ratio, subset=['FCF/EPS Ratio'])\
+# Utilizziamo .map() invece di .applymap() per compatibilità con le nuove versioni di Pandas
+styled_df = df.style.map(highlight_fcf_ratio, subset=['FCF/EPS Ratio'])\
                     .format({
                         "Prezzo ($)": "${:,.2f}",
                         "Basic EPS TTM ($)": "${:,.2f}",

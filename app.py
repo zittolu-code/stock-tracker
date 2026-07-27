@@ -81,7 +81,7 @@ def analyze_reports_with_gemini(ticker, uploaded_files):
 
         # Chiamata all'API (Utilizziamo gemini-2.0-flash per massima affidabilità sui PDF)
         response = client.models.generate_content(
-            model="gemini-2.0-flash",
+            model="gemini-1.5-flash",
             contents=contents,
             config=types.GenerateContentConfig(
                 system_instruction=SYSTEM_INSTRUCTION,

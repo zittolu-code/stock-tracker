@@ -1,13 +1,16 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+import json
+from pypdf import PdfReader
 from google import genai
+from google.genai import types
 
-st.set_page_config(page_title="Stock Value Tracker", layout="wide")
+st.set_page_config(page_title="Stock Value & Forensics Tracker", layout="wide")
 
-st.title("📈 Prossimi Ingressi - Stock Value Tracker")
+st.title("📈 Stock Value Tracker & Financial Forensics Analyst")
 
-# Elenco completo dei Ticker
+# Lista dei Ticker
 TICKERS = [
     "NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", 
     "MA", "PLTR", "SAP", "CRM", "ISRG", "NOW", "MELI", "RACE", "O", 
@@ -15,128 +18,203 @@ TICKERS = [
     "TYL", "FIG", "MARA"
 ]
 
+# Inizializzazione della memoria di sessione per le analisi Forensics
+if "forensic_data" not in st.session_state:
+    st.session_state.forensic_data = {}
+
+# ---------------------------------------------------------
+# PROMPT SISTEMA: Financial Forensics & Equity Analyst
+# ---------------------------------------------------------
+SYSTEM_INSTRUCTION = """
+Sei "Financial Forensics & Equity Analyst", un analista finanziario senior ed esperto in contabilità aziendale (Corporate Finance / Forensic Accounting) specializzato nella lettura critica delle trimestrali (10-Q), dei report annuali (10-K / Bilanci d'Esercizio) e dei documenti finanziari di società quotate (US GAAP e IFRS).
+
+Il tuo obiettivo principale non è solo riassumere i dati, ma condurre un'analisi fondamentale rigorosa e individuare qualsiasi "insidia contabile" (red flag), manipolazione lecita ma fuorviante delle metriche, o rischio nascosto tra le righe.
+
+APPROCCIO ANALITICO:
+1. Scetticismo Professionale: Guarda oltre le metriche adjusted ("Non-GAAP") e i commenti ottimistici del management.
+2. Rigoroso e Quantitativo: Basa ogni conclusione su numeri, indici di bilancio e confronti temporali o settoriali.
+3. Incroccio dei Dati: Correla sempre Conto Economico, Stato Patrimoniale e Rendiconto Finanziario per verificare la qualità degli utili.
+"""
+
+# ---------------------------------------------------------
+# FUNZIONE PER ESTRARRE TESTO DA PDF
+# ---------------------------------------------------------
+def extract_text_from_pdf(pdf_file):
+    reader = PdfReader(pdf_file)
+    text = ""
+    for page in reader.pages:
+        extracted = page.extract_text()
+        if extracted:
+            text += extracted + "\n"
+    return text
+
+# ---------------------------------------------------------
+# FUNZIONE PER ESEGUIRE L'ANALISI FORENSICS CON GEMINI
+# ---------------------------------------------------------
+def analyze_report_with_gemini(ticker, pdf_text):
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit!")
+        return None
+
+    client = genai.Client(api_key=api_key)
+
+    prompt = f"""
+    Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
+    Ecco il testo estratto dal documento finanziario/trimestrale:
+
+    --- INIZIO DOCUMENTO ---
+    {pdf_text[:120000]}  # Tronca il testo se supera il limite di contesto
+    --- FINE DOCUMENTO ---
+
+    Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non ricorrenti, o da voci contabili distorsive).
+
+    Restituisci un JSON strutturato esattamente con queste chiavi:
+    {{
+      "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM (es. 6.45)
+      "forensic_score": float, # Voto da 1.0 a 10.0 sulla qualità e trasparenza contabile
+      "quality_of_earnings": "string", # Esempi: "Alta (Cash Backed)", "Media", "Bassa (Aggressive/SBC)"
+      "main_red_flag": "string", # Sintesi della principale insidia o rischio contabile emerso
+      "summary_verdict": "string", # Sintesi breve del verdetto dell'Analista
+      "full_report_markdown": "string" # Il report completo e dettagliato formattato in Markdown secondo i 4 punti dello schema dell'Analista (1. Sintesi Istituzionale, 2. Incroccio Dati & Qualità Bilanci, 3. Insidie & Red Flags Nascoste, 4. Verdetto Fondamentale)
+    }}
+    """
+
+    response = client.models.generate_content(
+        model="gemini-2.5-flash",
+        contents=prompt,
+        config=types.GenerateContentConfig(
+            system_instruction=SYSTEM_INSTRUCTION,
+            response_mime_type="application/json",
+            temperature=0.2,
+        ),
+    )
+
+    try:
+        data = json.loads(response.text)
+        return data
+    except Exception as e:
+        st.error(f"Errore nella decodifica della risposta di Gemini: {e}")
+        return None
+
+# ---------------------------------------------------------
+# BARRA LATERALE: UPLOAD PDF & ANALISI GEMINI
+# ---------------------------------------------------------
+st.sidebar.header("🔍 Modulo Forensic Accounting")
+selected_ticker = st.sidebar.selectbox("Seleziona Ticker dell'Azienda", TICKERS)
+uploaded_file = st.sidebar.file_uploader("Carica Report Trimestrale (PDF)", type=["pdf"])
+
+if st.sidebar.button("🧪 Analizza con GEM Analista"):
+    if uploaded_file is not None:
+        with st.spinner(f"Analisi Forensics in corso per {selected_ticker} con Gemini..."):
+            pdf_text = extract_text_from_pdf(uploaded_file)
+            analysis_result = analyze_report_with_gemini(selected_ticker, pdf_text)
+            if analysis_result:
+                st.session_state.forensic_data[selected_ticker] = analysis_result
+                st.sidebar.success(f"Analisi per {selected_ticker} completata!")
+    else:
+        st.sidebar.warning("Carica un file PDF prima di avviare l'analisi.")
+
+# ---------------------------------------------------------
+# RECUPERO DATI YAHOO FINANCE
+# ---------------------------------------------------------
 if st.button("🔄 Aggiorna Dati Live"):
     st.cache_data.clear()
 
 @st.cache_data(ttl=3600)
-def fetch_data(ticker_list):
+def fetch_yahoo_data(ticker_list):
     data_list = []
-    
     for ticker in ticker_list:
         try:
             stock = yf.Ticker(ticker)
-            info = stock.info or {}
+            info = stock.info
             
-            # Prezzo e metriche generali
-            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
+            price = info.get("currentPrice") or info.get("regularMarketPrice")
             pe = info.get("trailingPE")
             market_cap = info.get("marketCap")
             fcf = info.get("freeCashflow")
-            shares_outstanding = info.get("sharesOutstanding")
-            eps_trailing = info.get("trailingEps")
-            eps_forward = info.get("forwardEps")
-
-            # Calcolo Free Cash Flow Per Share e FCF/EPS Ratio
-            fcf_per_share = None
-            fcf_eps_ratio = None
             
-            if isinstance(fcf, (int, float)) and isinstance(shares_outstanding, (int, float)) and shares_outstanding > 0:
-                fcf_per_share = fcf / shares_outstanding
-                
-            if isinstance(fcf_per_share, (int, float)) and isinstance(eps_trailing, (int, float)) and eps_trailing > 0:
-                fcf_eps_ratio = fcf_per_share / eps_trailing
+            basic_eps_ttm = None
+            diluted_eps_ttm = None
+            
+            try:
+                financials = stock.ttm_financials
+                if financials is not None and not financials.empty:
+                    if "Basic EPS" in financials.index and pd.notna(financials.loc["Basic EPS"].iloc[0]):
+                        basic_eps_ttm = float(financials.loc["Basic EPS"].iloc[0])
+                    if "Diluted EPS" in financials.index and pd.notna(financials.loc["Diluted EPS"].iloc[0]):
+                        diluted_eps_ttm = float(financials.loc["Diluted EPS"].iloc[0])
+            except Exception:
+                pass
+            
+            if basic_eps_ttm is None and info.get("trailingEps") is not None:
+                basic_eps_ttm = float(info.get("trailingEps"))
+            if diluted_eps_ttm is None and info.get("trailingEps") is not None:
+                diluted_eps_ttm = float(info.get("trailingEps"))
 
-            # Conversione in miliardi per Market Cap e Free Cash Flow
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
+            
+            # Recupero dati calcolati da Gemini se presenti in session_state
+            forensic_info = st.session_state.forensic_data.get(ticker, {})
             
             data_list.append({
                 "Azienda": info.get("shortName", ticker),
                 "Ticker": ticker,
-                "Prezzo ($)": price,
-                "Basic EPS TTM ($)": eps_trailing,
-                "Diluted EPS TTM ($)": eps_trailing,
-                "P/E": pe,
+                "Prezzo ($)": price if isinstance(price, (int, float)) else None,
+                "Basic EPS TTM ($)": basic_eps_ttm,
+                "Diluted EPS TTM ($)": diluted_eps_ttm,
+                "EPS Diluito Normalizzato TTM ($)": forensic_info.get("normalized_diluted_eps_ttm", None),
+                "P/E": pe if isinstance(pe, (int, float)) else None,
                 "Market Cap ($B)": mc_billion,
                 "Free Cash Flow ($B)": fcf_billion,
-                "FCF/EPS Ratio": fcf_eps_ratio
+                "Forensic Score": forensic_info.get("forensic_score", None),
+                "Quality of Earnings": forensic_info.get("quality_of_earnings", "N/A"),
+                "Principale Red Flag": forensic_info.get("main_red_flag", "N/A"),
+                "Verdetto Analista": forensic_info.get("summary_verdict", "N/A")
             })
-        except Exception as e:
+        except Exception:
             data_list.append({
-                "Azienda": ticker,
-                "Ticker": ticker,
-                "Prezzo ($)": None,
-                "Basic EPS TTM ($)": None,
-                "Diluted EPS TTM ($)": None,
-                "P/E": None,
-                "Market Cap ($B)": None,
-                "Free Cash Flow ($B)": None,
-                "FCF/EPS Ratio": None
+                "Azienda": ticker, "Ticker": ticker, "Prezzo ($)": None,
+                "Basic EPS TTM ($)": None, "Diluted EPS TTM ($)": None,
+                "EPS Diluito Normalizzato TTM ($)": None, "P/E": None,
+                "Market Cap ($B)": None, "Free Cash Flow ($B)": None,
+                "Forensic Score": None, "Quality of Earnings": "N/A",
+                "Principale Red Flag": "N/A", "Verdetto Analista": "N/A"
             })
             
     return pd.DataFrame(data_list)
 
-with st.spinner("Recupero dati finanziari da Yahoo Finance..."):
-    df = fetch_data(TICKERS)
+with st.spinner("Scaricamento dati finanziari e unione analisi in corso..."):
+    df = fetch_yahoo_data(TICKERS)
 
-# Funzione di stile per la formattazione condizionale (Verde > 1, Rosso <= 1)
-def highlight_fcf_ratio(val):
-    if pd.isna(val) or val is None:
-        return ''
-    elif val > 1.0:
-        return 'background-color: #2e7d32; color: white; font-weight: bold;'
-    else:
-        return 'background-color: #c62828; color: white; font-weight: bold;'
+# Visualizzazione Tabella con Ordinamento Numerico
+st.dataframe(
+    df,
+    use_container_width=True,
+    column_config={
+        "Prezzo ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "Basic EPS TTM ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "Diluted EPS TTM ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "EPS Diluito Normalizzato TTM ($)": st.column_config.NumberColumn(format="$%.2f"),
+        "P/E": st.column_config.NumberColumn(format="%.2f"),
+        "Market Cap ($B)": st.column_config.NumberColumn(format="$%.2f B"),
+        "Free Cash Flow ($B)": st.column_config.NumberColumn(format="$%.2f B"),
+        "Forensic Score": st.column_config.NumberColumn(format="%.1f / 10"),
+    }
+)
 
-styled_df = df.style.map(highlight_fcf_ratio, subset=['FCF/EPS Ratio'])\
-                    .format({
-                        "Prezzo ($)": "${:,.2f}",
-                        "Basic EPS TTM ($)": "${:,.2f}",
-                        "Diluted EPS TTM ($)": "${:,.2f}",
-                        "P/E": "{:,.2f}",
-                        "Market Cap ($B)": "${:,.2f} B",
-                        "Free Cash Flow ($B)": "${:,.2f} B",
-                        "FCF/EPS Ratio": "{:,.2f}"
-                    }, na_rep="N/A")
-
-st.dataframe(styled_df, use_container_width=True)
-
-# -------------------------------------------------------------
-# INTEGRAZIONE ASSISTENTE GEMINI
-# -------------------------------------------------------------
+# ---------------------------------------------------------
+# SEZIONE REPORT COMPLETO STAMPABILE
+# ---------------------------------------------------------
 st.markdown("---")
-st.subheader("🤖 Assistente Finanziario Gemini")
+st.header("📄 Report Forensics Dettagliato")
 
-api_key = st.secrets.get("GEMINI_API_KEY")
-
-if not api_key:
-    st.info("💡 Per attivare l'assistente, inserisci la tua GEMINI_API_KEY nei Secrets di Streamlit Cloud.")
+available_reports = list(st.session_state.forensic_data.keys())
+if available_reports:
+    selected_report_ticker = st.selectbox("Seleziona un'azienda per leggere il Report Completo:", available_reports)
+    if selected_report_ticker in st.session_state.forensic_data:
+        report_md = st.session_state.forensic_data[selected_report_ticker]["full_report_markdown"]
+        st.markdown(report_md)
 else:
-    user_prompt = st.text_input("Fai una domanda sui dati della tabella (es: 'Analizza le 3 aziende con FCF/EPS Ratio migliore'):")
-    
-    if st.button("✨ Chiedi a Gemini") and user_prompt:
-        with st.spinner("Gemini sta analizzando i dati..."):
-            try:
-                client = genai.Client(api_key=api_key)
-                
-                table_context = df.to_csv(index=False)
-                
-                prompt = f"""
-                Sei un analista finanziario esperto. Analizza la seguente tabella di dati di bilancio:
-                
-                {table_context}
-                
-                Rispondi alla seguente domanda dell'utente fornendo un'analisi sintetica e professionale:
-                {user_prompt}
-                """
-                
-                response = client.models.generate_content(
-                    model='gemini-2.5-flash',
-                    contents=prompt
-                )
-                
-                st.markdown("### Risposta di Gemini:")
-                st.write(response.text)
-                
-            except Exception as e:
-                st.error(f"Errore durante la comunicazione con Gemini: {e}")
+    st.info("💡 Nessun report PDF ancora analizzato in questa sessione. Carica un file PDF dalla barra laterale per generare il primo report!")

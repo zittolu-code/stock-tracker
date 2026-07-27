@@ -5,11 +5,13 @@ import json
 import pypdf
 import google.generativeai as genai
 
-# Configurazione Pagina Streamlit
+# ---------------------------------------------------------
+# CONFIGURAZIONE PAGINA STREAMLIT
+# ---------------------------------------------------------
 st.set_page_config(page_title="Stock Value & Forensics Tracker", layout="wide")
 st.title("📈 Stock Value Tracker & Financial Forensics Analyst")
 
-# Lista Ticker
+# Lista Ticker di default
 TICKERS = [
     "NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", 
     "MA", "PLTR", "SAP", "CRM", "ISRG", "NOW", "MELI", "RACE", "O", 
@@ -17,11 +19,13 @@ TICKERS = [
     "TYL", "FIG", "MARA"
 ]
 
-# Inizializzazione session state
+# Inizializzazione session state per memorizzare i report di forensic accounting
 if "forensic_data" not in st.session_state:
     st.session_state.forensic_data = {}
 
-# Prompt Financial Forensics & Equity Analyst
+# ---------------------------------------------------------
+# PROMPT SISTEMA: Financial Forensics & Equity Analyst
+# ---------------------------------------------------------
 SYSTEM_INSTRUCTION = """
 Sei "Financial Forensics & Equity Analyst", un analista finanziario senior ed esperto in contabilità aziendale (Corporate Finance / Forensic Accounting) specializzato nella lettura critica delle trimestrali (10-Q), dei report annuali (10-K / Bilanci d'Esercizio) e dei documenti finanziari di società quotate (US GAAP e IFRS).
 
@@ -33,6 +37,9 @@ APPROCCIO ANALITICO:
 3. Incroccio dei Dati: Correla sempre Conto Economico, Stato Patrimoniale e Rendiconto Finanziario per verificare la qualità degli utili.
 """
 
+# ---------------------------------------------------------
+# FUNZIONE PER ESTRARRE TESTO DA PDF MULTIPLI
+# ---------------------------------------------------------
 def extract_text_from_pdfs(uploaded_files):
     combined_text = ""
     for idx, file in enumerate(uploaded_files):
@@ -44,48 +51,54 @@ def extract_text_from_pdfs(uploaded_files):
                 if text:
                     combined_text += text + "\n"
         except Exception as e:
-            st.warning(f"Avviso lettura file {file.name}: {e}")
+            st.warning(f"Avviso durante la lettura di {file.name}: {e}")
     return combined_text
 
+# ---------------------------------------------------------
+# FUNZIONE ANALISI CON GEMINI (gemini-2.5-flash)
+# ---------------------------------------------------------
 def analyze_reports_with_gemini(ticker, uploaded_files):
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
-        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit!")
+        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit! Configurala nelle impostazioni dell'app.")
         return None
 
     try:
-        # Configurazione API Key
+        # Configurazione chiave API
         genai.configure(api_key=api_key.strip('"\' '))
 
-        # Configurazione del modello Gemini 1.5 Flash con System Instruction
+        # Inizializzazione modello gemini-2.5-flash
         model = genai.GenerativeModel(
-            model_name="gemini-1.5-flash",
+            model_name="gemini-2.5-flash",
             system_instruction=SYSTEM_INSTRUCTION,
-            generation_config={"response_mime_type": "application/json", "temperature": 0.2}
+            generation_config={
+                "response_mime_type": "application/json", 
+                "temperature": 0.2
+            }
         )
 
-        # Estrazione del testo e troncamento a 100k caratteri per garantire la massima velocità nel piano gratuito
+        # Estrazione e ottimizzazione del testo estratto dai PDF
         pdf_text = extract_text_from_pdfs(uploaded_files)
-        truncated_text = pdf_text[:100000]
+        truncated_text = pdf_text[:120000]
 
         prompt_text = f"""
         Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
-        Ecco il testo estratto dai report finanziari caricati:
+        Ecco il testo estratto dai report finanziari/trimestrali caricati:
 
-        --- INIZIO TESTO ---
+        --- INIZIO TESTO REPORT ---
         {truncated_text}
-        --- FINE TESTO ---
+        --- FINE TESTO REPORT ---
 
         Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non ricorrenti, o da voci contabili distorsive).
 
-        Restituisci un JSON valido esattamente con queste chiavi:
+        Restituisci un JSON valido con ESATTAMENTE le seguenti chiavi:
         {{
-          "normalized_diluted_eps_ttm": float,
-          "forensic_score": float,
-          "quality_of_earnings": "string",
-          "main_red_flag": "string",
-          "summary_verdict": "string",
-          "full_report_markdown": "string"
+          "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM
+          "forensic_score": float, # Punteggio da 1.0 a 10.0 sulla trasparenza contabile
+          "quality_of_earnings": "string", # Esempi: "Alta (Cash Backed)", "Media", "Bassa (Aggressive/SBC)"
+          "main_red_flag": "string", # Sintesi della principale insidia o rischio contabile
+          "summary_verdict": "string", # Giudizio sintetico dell'Analista
+          "full_report_markdown": "string" # Report completo e dettagliato formattato in Markdown secondo lo schema in 4 punti dell'Analista
         }}
         """
 
@@ -97,7 +110,9 @@ def analyze_reports_with_gemini(ticker, uploaded_files):
         st.error(f"❌ Errore durante l'analisi con Gemini: {str(e)}")
         return None
 
-# Sidebar Upload
+# ---------------------------------------------------------
+# BARRA LATERALE: MULTI-UPLOAD PDF & ANALISI
+# ---------------------------------------------------------
 st.sidebar.header("🔍 Modulo Forensic Accounting")
 selected_ticker = st.sidebar.selectbox("Seleziona Ticker dell'Azienda", TICKERS)
 
@@ -109,15 +124,17 @@ uploaded_files = st.sidebar.file_uploader(
 
 if st.sidebar.button("🧪 Analizza Report con GEM Analista"):
     if uploaded_files:
-        with st.spinner(f"Analisi in corso per {selected_ticker}..."):
+        with st.spinner(f"Elaborazione PDF e analisi in corso per {selected_ticker}..."):
             analysis_result = analyze_reports_with_gemini(selected_ticker, uploaded_files)
             if analysis_result:
                 st.session_state.forensic_data[selected_ticker] = analysis_result
-                st.sidebar.success(f"Analisi per {selected_ticker} completata!")
+                st.sidebar.success(f"Analisi per {selected_ticker} completata con successo!")
     else:
-        st.sidebar.warning("Seleziona almeno un PDF prima di procedere.")
+        st.sidebar.warning("Seleziona uno o più file PDF prima di avviare l'analisi.")
 
-# Fetch Yahoo Finance Data
+# ---------------------------------------------------------
+# TABELLA DATI LIVE (YAHOO FINANCE + GEMINI FORENSICS)
+# ---------------------------------------------------------
 if st.button("🔄 Aggiorna Dati Live (Yahoo Finance)"):
     st.cache_data.clear()
 
@@ -154,6 +171,7 @@ def fetch_yahoo_data(ticker_list):
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
             
+            # Unione con i dati elaborati da Gemini in session_state
             forensic_info = st.session_state.forensic_data.get(ticker, {})
             
             data_list.append({
@@ -186,7 +204,7 @@ def fetch_yahoo_data(ticker_list):
 with st.spinner("Scaricamento dati finanziari e unione analisi in corso..."):
     df = fetch_yahoo_data(TICKERS)
 
-# Visualizzazione Dataframe
+# Visualizzazione Tabella Principale
 st.dataframe(
     df,
     use_container_width=True,
@@ -202,29 +220,17 @@ st.dataframe(
     }
 )
 
-# Report Dettagliato
+# ---------------------------------------------------------
+# SEZIONE REPORT STAMPABILE ESTESO
+# ---------------------------------------------------------
 st.markdown("---")
 st.header("📄 Report Forensics Dettagliato")
 
 available_reports = list(st.session_state.forensic_data.keys())
 if available_reports:
-    selected_report_ticker = st.selectbox("Seleziona un'azienda per leggere il Report dell'Analista:", available_reports)
+    selected_report_ticker = st.selectbox("Seleziona un'azienda per consultare il Report dell'Analista:", available_reports)
     if selected_report_ticker in st.session_state.forensic_data:
         report_md = st.session_state.forensic_data[selected_report_ticker]["full_report_markdown"]
         st.markdown(report_md)
 else:
     st.info("💡 Nessun report PDF ancora analizzato. Carica uno o più file PDF dalla barra laterale per avviare il tuo Analista Finanziario AI!")
-# --- PULSANTE TEMPORANEO PER VEDERE I MODELLI DISPONIBILI ---
-if st.sidebar.button("🔍 Mostra Modelli Disponibili"):
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if api_key:
-        try:
-            genai.configure(api_key=api_key.strip('"\' '))
-            st.sidebar.write("### Modelli supportati:")
-            for m in genai.list_models():
-                if 'generateContent' in m.supported_generation_methods:
-                    st.sidebar.code(m.name)
-        except Exception as e:
-            st.sidebar.error(f"Errore: {e}")
-    else:
-        st.sidebar.error("Manca GEMINI_API_KEY nei Secrets!")

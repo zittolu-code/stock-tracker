@@ -214,3 +214,17 @@ if available_reports:
         st.markdown(report_md)
 else:
     st.info("💡 Nessun report PDF ancora analizzato. Carica uno o più file PDF dalla barra laterale per avviare il tuo Analista Finanziario AI!")
+# --- PULSANTE TEMPORANEO PER VEDERE I MODELLI DISPONIBILI ---
+if st.sidebar.button("🔍 Mostra Modelli Disponibili"):
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if api_key:
+        try:
+            genai.configure(api_key=api_key.strip('"\' '))
+            st.sidebar.write("### Modelli supportati:")
+            for m in genai.list_models():
+                if 'generateContent' in m.supported_generation_methods:
+                    st.sidebar.code(m.name)
+        except Exception as e:
+            st.sidebar.error(f"Errore: {e}")
+    else:
+        st.sidebar.error("Manca GEMINI_API_KEY nei Secrets!")

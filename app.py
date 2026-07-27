@@ -61,22 +61,22 @@ def analyze_report_with_gemini(ticker, pdf_text):
 
     prompt = f"""
     Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
-    Ecco il testo estratto dal documento finanziario/trimestrale:
+    Ecco il testo estratto dai documenti finanziari/trimestrali forniti:
 
-    --- INIZIO DOCUMENTO ---
-    {pdf_text[:120000]}  # Tronca il testo se supera il limite di contesto
-    --- FINE DOCUMENTO ---
+    --- INIZIO DOCUMENTI ---
+    {pdf_text[:150000]}  # Limite esteso per supportare più documenti/trimestri
+    --- FINE DOCUMENTI ---
 
     Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non ricorrenti, o da voci contabili distorsive).
 
     Restituisci un JSON strutturato esattamente con queste chiavi:
     {{
-      "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM (es. 6.45)
+      "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM
       "forensic_score": float, # Voto da 1.0 a 10.0 sulla qualità e trasparenza contabile
       "quality_of_earnings": "string", # Esempi: "Alta (Cash Backed)", "Media", "Bassa (Aggressive/SBC)"
       "main_red_flag": "string", # Sintesi della principale insidia o rischio contabile emerso
       "summary_verdict": "string", # Sintesi breve del verdetto dell'Analista
-      "full_report_markdown": "string" # Il report completo e dettagliato formattato in Markdown secondo i 4 punti dello schema dell'Analista (1. Sintesi Istituzionale, 2. Incroccio Dati & Qualità Bilanci, 3. Insidie & Red Flags Nascoste, 4. Verdetto Fondamentale)
+      "full_report_markdown": "string" # Il report completo e dettagliato formattato in Markdown secondo i 4 punti dello schema dell'Analista
     }}
     """
 
@@ -98,22 +98,32 @@ def analyze_report_with_gemini(ticker, pdf_text):
         return None
 
 # ---------------------------------------------------------
-# BARRA LATERALE: UPLOAD PDF & ANALISI GEMINI
+# BARRA LATERALE: MULTI-UPLOAD PDF & ANALISI GEMINI
 # ---------------------------------------------------------
 st.sidebar.header("🔍 Modulo Forensic Accounting")
 selected_ticker = st.sidebar.selectbox("Seleziona Ticker dell'Azienda", TICKERS)
-uploaded_file = st.sidebar.file_uploader("Carica Report Trimestrale (PDF)", type=["pdf"])
 
-if st.sidebar.button("🧪 Analizza con GEM Analista"):
-    if uploaded_file is not None:
-        with st.spinner(f"Analisi Forensics in corso per {selected_ticker} con Gemini..."):
-            pdf_text = extract_text_from_pdf(uploaded_file)
-            analysis_result = analyze_report_with_gemini(selected_ticker, pdf_text)
+# Caricamento multiplo attivato impostando accept_multiple_files=True
+uploaded_files = st.sidebar.file_uploader(
+    "Carica Report Trimestrali (PDF multipli)", 
+    type=["pdf"], 
+    accept_multiple_files=True
+)
+
+if st.sidebar.button("🧪 Analizza tutti i Report con GEM Analista"):
+    if uploaded_files:
+        with st.spinner(f"Analisi Forensics in corso per {selected_ticker} su {len(uploaded_files)} file..."):
+            combined_text = ""
+            for idx, file in enumerate(uploaded_files):
+                combined_text += f"\n--- DOCUMENTO {idx+1}: {file.name} ---\n"
+                combined_text += extract_text_from_pdf(file)
+            
+            analysis_result = analyze_report_with_gemini(selected_ticker, combined_text)
             if analysis_result:
                 st.session_state.forensic_data[selected_ticker] = analysis_result
-                st.sidebar.success(f"Analisi per {selected_ticker} completata!")
+                st.sidebar.success(f"Analisi per {selected_ticker} completata con successo!")
     else:
-        st.sidebar.warning("Carica un file PDF prima di avviare l'analisi.")
+        st.sidebar.warning("Seleziona uno o più file PDF prima di avviare l'analisi.")
 
 # ---------------------------------------------------------
 # RECUPERO DATI YAHOO FINANCE
@@ -155,7 +165,6 @@ def fetch_yahoo_data(ticker_list):
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
             
-            # Recupero dati calcolati da Gemini se presenti in session_state
             forensic_info = st.session_state.forensic_data.get(ticker, {})
             
             data_list.append({
@@ -188,7 +197,7 @@ def fetch_yahoo_data(ticker_list):
 with st.spinner("Scaricamento dati finanziari e unione analisi in corso..."):
     df = fetch_yahoo_data(TICKERS)
 
-# Visualizzazione Tabella con Ordinamento Numerico
+# Visualizzazione Tabella
 st.dataframe(
     df,
     use_container_width=True,
@@ -217,4 +226,4 @@ if available_reports:
         report_md = st.session_state.forensic_data[selected_report_ticker]["full_report_markdown"]
         st.markdown(report_md)
 else:
-    st.info("💡 Nessun report PDF ancora analizzato in questa sessione. Carica un file PDF dalla barra laterale per generare il primo report!")
+    st.info("💡 Nessun report PDF ancora analizzato in questa sessione. Carica uno o più file PDF dalla barra laterale per generare l'analisi!")

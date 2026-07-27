@@ -55,7 +55,7 @@ def extract_text_from_pdfs(uploaded_files):
     return combined_text
 
 # ---------------------------------------------------------
-# FUNZIONE ANALISI CON GEMINI (gemini-2.5-flash)
+# FUNZIONE ANALISI CON GEMINI (gemini-1.5-flash)
 # ---------------------------------------------------------
 def analyze_reports_with_gemini(ticker, uploaded_files):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -67,9 +67,9 @@ def analyze_reports_with_gemini(ticker, uploaded_files):
         # Configurazione chiave API
         genai.configure(api_key=api_key.strip('"\' '))
 
-        # Inizializzazione modello gemini-2.5-flash
+        # Inizializzazione modello gemini-1.5-flash
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash",
+            model_name="gemini-1.5-flash",
             system_instruction=SYSTEM_INSTRUCTION,
             generation_config={
                 "response_mime_type": "application/json", 

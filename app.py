@@ -55,7 +55,7 @@ def extract_text_from_pdfs(uploaded_files):
     return combined_text
 
 # ---------------------------------------------------------
-# FUNZIONE ANALISI CON GEMINI (gemini-2.5-flash-lite)
+# FUNZIONE ANALISI CON GEMINI (gemini-3.5-flash)
 # ---------------------------------------------------------
 def analyze_reports_with_gemini(ticker, uploaded_files):
     api_key = st.secrets.get("GEMINI_API_KEY")
@@ -67,9 +67,9 @@ def analyze_reports_with_gemini(ticker, uploaded_files):
         # Configurazione chiave API
         genai.configure(api_key=api_key.strip('"\' '))
 
-        # Inizializzazione del modello Gemini 2.5 Flash-Lite
+        # Inizializzazione del modello Gemini 3.5 Flash
         model = genai.GenerativeModel(
-            model_name="gemini-2.5-flash-lite",
+            model_name="gemini-3.5-flash",
             system_instruction=SYSTEM_INSTRUCTION,
             generation_config={
                 "response_mime_type": "application/json", 
@@ -124,7 +124,7 @@ uploaded_files = st.sidebar.file_uploader(
 
 if st.sidebar.button("🧪 Analizza Report con GEM Analista"):
     if uploaded_files:
-        with st.spinner(f"Elaborazione PDF e analisi in corso con Gemini 2.5 Flash-Lite per {selected_ticker}..."):
+        with st.spinner(f"Elaborazione PDF e analisi in corso con Gemini 3.5 Flash per {selected_ticker}..."):
             analysis_result = analyze_reports_with_gemini(selected_ticker, uploaded_files)
             if analysis_result:
                 st.session_state.forensic_data[selected_ticker] = analysis_result

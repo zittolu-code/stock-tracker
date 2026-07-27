@@ -2,9 +2,9 @@ import streamlit as st
 import yfinance as yf
 import pandas as pd
 import json
-from pypdf import PdfReader
 from google import genai
 from google.genai import types
+from google.genai.errors import APIError
 
 st.set_page_config(page_title="Stock Value & Forensics Tracker", layout="wide")
 
@@ -37,64 +37,66 @@ APPROCCIO ANALITICO:
 """
 
 # ---------------------------------------------------------
-# FUNZIONE PER ESTRARRE TESTO DA PDF
-# ---------------------------------------------------------
-def extract_text_from_pdf(pdf_file):
-    reader = PdfReader(pdf_file)
-    text = ""
-    for page in reader.pages:
-        extracted = page.extract_text()
-        if extracted:
-            text += extracted + "\n"
-    return text
-
-# ---------------------------------------------------------
 # FUNZIONE PER ESEGUIRE L'ANALISI FORENSICS CON GEMINI
 # ---------------------------------------------------------
-def analyze_report_with_gemini(ticker, pdf_text):
+def analyze_reports_with_gemini(ticker, uploaded_files):
+    # Verifica presenza API Key
     api_key = st.secrets.get("GEMINI_API_KEY")
     if not api_key:
-        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit!")
+        st.error("⚠️ Nessuna 'GEMINI_API_KEY' trovata nei Secrets di Streamlit! Vai su Settings -> Secrets e aggiungila.")
         return None
 
-    client = genai.Client(api_key=api_key)
-
-    prompt = f"""
-    Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
-    Ecco il testo estratto dai documenti finanziari/trimestrali forniti:
-
-    --- INIZIO DOCUMENTI ---
-    {pdf_text[:150000]}  # Limite esteso per supportare più documenti/trimestri
-    --- FINE DOCUMENTI ---
-
-    Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non ricorrenti, o da voci contabili distorsive).
-
-    Restituisci un JSON strutturato esattamente con queste chiavi:
-    {{
-      "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM
-      "forensic_score": float, # Voto da 1.0 a 10.0 sulla qualità e trasparenza contabile
-      "quality_of_earnings": "string", # Esempi: "Alta (Cash Backed)", "Media", "Bassa (Aggressive/SBC)"
-      "main_red_flag": "string", # Sintesi della principale insidia o rischio contabile emerso
-      "summary_verdict": "string", # Sintesi breve del verdetto dell'Analista
-      "full_report_markdown": "string" # Il report completo e dettagliato formattato in Markdown secondo i 4 punti dello schema dell'Analista
-    }}
-    """
-
-    response = client.models.generate_content(
-        model="gemini-1.5-flash",
-        contents=prompt,
-        config=types.GenerateContentConfig(
-            system_instruction=SYSTEM_INSTRUCTION,
-            response_mime_type="application/json",
-            temperature=0.2,
-        ),
-    )
-
     try:
+        # Inizializzazione client
+        client = genai.Client(api_key=api_key.strip('"\' '))
+
+        # Prepariamo i file PDF per il modello
+        contents = []
+        for file in uploaded_files:
+            bytes_data = file.getvalue()
+            contents.append(
+                types.Part.from_bytes(
+                    data=bytes_data,
+                    mime_type="application/pdf",
+                )
+            )
+
+        prompt_text = f"""
+        Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
+        Analizza attentamente i documenti PDF allegati (report trimestrali/annuali).
+
+        Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non riccorrenti, o da voci contabili distorsive).
+
+        Restituisci un JSON strutturato esattamente con queste chiavi:
+        {{
+          "normalized_diluted_eps_ttm": float, # Valore calcolato dell'EPS Diluito Normalizzato TTM
+          "forensic_score": float, # Voto da 1.0 a 10.0 sulla qualità e trasparenza contabile
+          "quality_of_earnings": "string", # Esempi: "Alta (Cash Backed)", "Media", "Bassa (Aggressive/SBC)"
+          "main_red_flag": "string", # Sintesi della principale insidia o rischio contabile emerso
+          "summary_verdict": "string", # Sintesi breve del verdetto dell'Analista
+          "full_report_markdown": "string" # Il report completo e dettagliato formattato in Markdown secondo i 4 punti dello schema dell'Analista
+        }}
+        """
+        contents.append(prompt_text)
+
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=contents,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+
         data = json.loads(response.text)
         return data
+
+    except APIError as e:
+        st.error(f"❌ Errore API Gemini (Codice {e.code}): {e.message}")
+        return None
     except Exception as e:
-        st.error(f"Errore nella decodifica della risposta di Gemini: {e}")
+        st.error(f"❌ Errore durante l'analisi: {str(e)}")
         return None
 
 # ---------------------------------------------------------
@@ -103,7 +105,6 @@ def analyze_report_with_gemini(ticker, pdf_text):
 st.sidebar.header("🔍 Modulo Forensic Accounting")
 selected_ticker = st.sidebar.selectbox("Seleziona Ticker dell'Azienda", TICKERS)
 
-# Caricamento multiplo attivato impostando accept_multiple_files=True
 uploaded_files = st.sidebar.file_uploader(
     "Carica Report Trimestrali (PDF multipli)", 
     type=["pdf"], 
@@ -112,16 +113,11 @@ uploaded_files = st.sidebar.file_uploader(
 
 if st.sidebar.button("🧪 Analizza tutti i Report con GEM Analista"):
     if uploaded_files:
-        with st.spinner(f"Analisi Forensics in corso per {selected_ticker} su {len(uploaded_files)} file..."):
-            combined_text = ""
-            for idx, file in enumerate(uploaded_files):
-                combined_text += f"\n--- DOCUMENTO {idx+1}: {file.name} ---\n"
-                combined_text += extract_text_from_pdf(file)
-            
-            analysis_result = analyze_report_with_gemini(selected_ticker, combined_text)
+        with st.spinner(f"Elaborazione PDF e analisi in corso per {selected_ticker}..."):
+            analysis_result = analyze_reports_with_gemini(selected_ticker, uploaded_files)
             if analysis_result:
                 st.session_state.forensic_data[selected_ticker] = analysis_result
-                st.sidebar.success(f"Analisi per {selected_ticker} completata con successo!")
+                st.sidebar.success(f"Analisi per {selected_ticker} completata!")
     else:
         st.sidebar.warning("Seleziona uno o più file PDF prima di avviare l'analisi.")
 
@@ -227,52 +223,3 @@ if available_reports:
         st.markdown(report_md)
 else:
     st.info("💡 Nessun report PDF ancora analizzato in questa sessione. Carica uno o più file PDF dalla barra laterale per generare l'analisi!")
-from google.genai import errors
-
-def analyze_report_with_gemini(ticker, pdf_text):
-    api_key = st.secrets.get("GEMINI_API_KEY")
-    if not api_key:
-        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit!")
-        return None
-
-    client = genai.Client(api_key=api_key)
-
-    prompt = f"""
-    Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
-    Ecco il testo estratto dai documenti finanziari/trimestrali forniti:
-
-    --- INIZIO DOCUMENTI ---
-    {pdf_text[:120000]}
-    --- FINE DOCUMENTI ---
-
-    Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non legalmente ricorrenti, o da voci contabili distorsive).
-
-    Restituisci un JSON strutturato esattamente con queste chiavi:
-    {{
-      "normalized_diluted_eps_ttm": float,
-      "forensic_score": float,
-      "quality_of_earnings": "string",
-      "main_red_flag": "string",
-      "summary_verdict": "string",
-      "full_report_markdown": "string"
-    }}
-    """
-
-    try:
-        response = client.models.generate_content(
-            model="gemini-1.5-flash",
-            contents=prompt,
-            config=types.GenerateContentConfig(
-                system_instruction=SYSTEM_INSTRUCTION,
-                response_mime_type="application/json",
-                temperature=0.2,
-            ),
-        )
-        data = json.loads(response.text)
-        return data
-    except errors.APIError as e:
-        st.error(f"Errore API Gemini ({e.code}): {e.message}")
-        return None
-    except Exception as e:
-        st.error(f"Errore durante l'elaborazione dell'analisi: {e}")
-        return None

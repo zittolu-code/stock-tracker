@@ -1,6 +1,7 @@
 import streamlit as st
 import yfinance as yf
 import pandas as pd
+from google import genai
 
 st.set_page_config(page_title="Stock Value Tracker", layout="wide")
 
@@ -26,14 +27,12 @@ def fetch_data(ticker_list):
             stock = yf.Ticker(ticker)
             info = stock.info
             
-            # Prezzo e metriche generali
             price = info.get("currentPrice") or info.get("regularMarketPrice")
             pe = info.get("trailingPE")
             market_cap = info.get("marketCap")
             fcf = info.get("freeCashflow")
             shares_outstanding = info.get("sharesOutstanding")
             
-            # Recupero dati TTM dal conto economico (Financials)
             basic_eps_ttm = None
             diluted_eps_ttm = None
             
@@ -52,13 +51,11 @@ def fetch_data(ticker_list):
             except Exception:
                 pass
             
-            # Fallback a trailingEps se i financials TTM non sono disponibili
             if basic_eps_ttm is None and info.get("trailingEps") is not None:
                 basic_eps_ttm = float(info.get("trailingEps"))
             if diluted_eps_ttm is None and info.get("trailingEps") is not None:
                 diluted_eps_ttm = float(info.get("trailingEps"))
 
-            # Calcolo Free Cash Flow Per Share e FCF/EPS Ratio
             fcf_per_share = None
             fcf_eps_ratio = None
             
@@ -68,7 +65,6 @@ def fetch_data(ticker_list):
             if isinstance(fcf_per_share, (int, float)) and isinstance(diluted_eps_ttm, (int, float)) and diluted_eps_ttm > 0:
                 fcf_eps_ratio = fcf_per_share / diluted_eps_ttm
 
-            # Conversione in miliardi per Market Cap e Free Cash Flow
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
             
@@ -98,10 +94,9 @@ def fetch_data(ticker_list):
             
     return pd.DataFrame(data_list)
 
-with st.spinner("Recupero dati finanziari e calcolo FCF/EPS Ratio da Yahoo Finance..."):
+with st.spinner("Recupero dati finanziari..."):
     df = fetch_data(TICKERS)
 
-# Funzione di stile per la formattazione condizionale (Verde > 1, Rosso <= 1)
 def highlight_fcf_ratio(val):
     if pd.isna(val) or val is None:
         return ''
@@ -110,7 +105,6 @@ def highlight_fcf_ratio(val):
     else:
         return 'background-color: #c62828; color: white; font-weight: bold;'
 
-# Utilizziamo .map() invece di .applymap() per compatibilità con le nuove versioni di Pandas
 styled_df = df.style.map(highlight_fcf_ratio, subset=['FCF/EPS Ratio'])\
                     .format({
                         "Prezzo ($)": "${:,.2f}",
@@ -123,3 +117,45 @@ styled_df = df.style.map(highlight_fcf_ratio, subset=['FCF/EPS Ratio'])\
                     }, na_rep="N/A")
 
 st.dataframe(styled_df, use_container_width=True)
+
+# -------------------------------------------------------------
+# INTEGRAZIONE ASSISTENTE GEMINI
+# -------------------------------------------------------------
+st.markdown("---")
+st.subheader("🤖 Assistente Finanziario Gemini")
+
+# Recupero della chiave API dai secrets di Streamlit
+api_key = st.secrets.get("GEMINI_API_KEY")
+
+if not api_key:
+    st.info("💡 Per attivare l'assistente, inserisci la tua GEMINI_API_KEY nei Secrets di Streamlit Cloud.")
+else:
+    user_prompt = st.text_input("Fai una domanda sui dati della tabella (es: 'Analizza le 3 aziende con FCF/EPS Ratio migliore'):")
+    
+    if st.button("✨ Chiedi a Gemini") and user_prompt:
+        with st.spinner("Gemini sta analizzando i dati..."):
+            try:
+                client = genai.Client(api_key=api_key)
+                
+                # Prepariamo i dati della tabella in testo da passare al contesto
+                table_context = df.to_csv(index=False)
+                
+                prompt = f"""
+                Sei un analista finanziario esperto. Analizza la seguente tabella di dati di bilancio:
+                
+                {table_context}
+                
+                Rispondi alla seguente domanda dell'utente fornendo un'analisi sintetica e professionale:
+                {user_prompt}
+                """
+                
+                response = client.models.generate_content(
+                    model='gemini-2.5-flash',
+                    contents=prompt
+                )
+                
+                st.markdown("### Risposta di Gemini:")
+                st.write(response.text)
+                
+            except Exception as e:
+                st.error(f"Errore durante la comunicazione con Gemini: {e}")

@@ -25,61 +25,43 @@ def fetch_data(ticker_list):
     for ticker in ticker_list:
         try:
             stock = yf.Ticker(ticker)
-            info = stock.info
+            info = stock.info or {}
             
-            price = info.get("currentPrice") or info.get("regularMarketPrice")
+            # Prezzo e metriche generali
+            price = info.get("currentPrice") or info.get("regularMarketPrice") or info.get("previousClose")
             pe = info.get("trailingPE")
             market_cap = info.get("marketCap")
             fcf = info.get("freeCashflow")
             shares_outstanding = info.get("sharesOutstanding")
-            
-            basic_eps_ttm = None
-            diluted_eps_ttm = None
-            
-            try:
-                financials = stock.ttm_financials
-                if financials is not None and not financials.empty:
-                    if "Basic EPS" in financials.index:
-                        val = financials.loc["Basic EPS"].iloc[0]
-                        if pd.notna(val):
-                            basic_eps_ttm = float(val)
-                    
-                    if "Diluted EPS" in financials.index:
-                        val = financials.loc["Diluted EPS"].iloc[0]
-                        if pd.notna(val):
-                            diluted_eps_ttm = float(val)
-            except Exception:
-                pass
-            
-            if basic_eps_ttm is None and info.get("trailingEps") is not None:
-                basic_eps_ttm = float(info.get("trailingEps"))
-            if diluted_eps_ttm is None and info.get("trailingEps") is not None:
-                diluted_eps_ttm = float(info.get("trailingEps"))
+            eps_trailing = info.get("trailingEps")
+            eps_forward = info.get("forwardEps")
 
+            # Calcolo Free Cash Flow Per Share e FCF/EPS Ratio
             fcf_per_share = None
             fcf_eps_ratio = None
             
             if isinstance(fcf, (int, float)) and isinstance(shares_outstanding, (int, float)) and shares_outstanding > 0:
                 fcf_per_share = fcf / shares_outstanding
                 
-            if isinstance(fcf_per_share, (int, float)) and isinstance(diluted_eps_ttm, (int, float)) and diluted_eps_ttm > 0:
-                fcf_eps_ratio = fcf_per_share / diluted_eps_ttm
+            if isinstance(fcf_per_share, (int, float)) and isinstance(eps_trailing, (int, float)) and eps_trailing > 0:
+                fcf_eps_ratio = fcf_per_share / eps_trailing
 
+            # Conversione in miliardi per Market Cap e Free Cash Flow
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
             
             data_list.append({
                 "Azienda": info.get("shortName", ticker),
                 "Ticker": ticker,
-                "Prezzo ($)": price if isinstance(price, (int, float)) else None,
-                "Basic EPS TTM ($)": basic_eps_ttm,
-                "Diluted EPS TTM ($)": diluted_eps_ttm,
-                "P/E": pe if isinstance(pe, (int, float)) else None,
+                "Prezzo ($)": price,
+                "Basic EPS TTM ($)": eps_trailing,
+                "Diluted EPS TTM ($)": eps_trailing,
+                "P/E": pe,
                 "Market Cap ($B)": mc_billion,
                 "Free Cash Flow ($B)": fcf_billion,
                 "FCF/EPS Ratio": fcf_eps_ratio
             })
-        except Exception:
+        except Exception as e:
             data_list.append({
                 "Azienda": ticker,
                 "Ticker": ticker,
@@ -94,9 +76,10 @@ def fetch_data(ticker_list):
             
     return pd.DataFrame(data_list)
 
-with st.spinner("Recupero dati finanziari..."):
+with st.spinner("Recupero dati finanziari da Yahoo Finance..."):
     df = fetch_data(TICKERS)
 
+# Funzione di stile per la formattazione condizionale (Verde > 1, Rosso <= 1)
 def highlight_fcf_ratio(val):
     if pd.isna(val) or val is None:
         return ''
@@ -124,7 +107,6 @@ st.dataframe(styled_df, use_container_width=True)
 st.markdown("---")
 st.subheader("🤖 Assistente Finanziario Gemini")
 
-# Recupero della chiave API dai secrets di Streamlit
 api_key = st.secrets.get("GEMINI_API_KEY")
 
 if not api_key:
@@ -137,7 +119,6 @@ else:
             try:
                 client = genai.Client(api_key=api_key)
                 
-                # Prepariamo i dati della tabella in testo da passare al contesto
                 table_context = df.to_csv(index=False)
                 
                 prompt = f"""

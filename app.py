@@ -227,3 +227,52 @@ if available_reports:
         st.markdown(report_md)
 else:
     st.info("💡 Nessun report PDF ancora analizzato in questa sessione. Carica uno o più file PDF dalla barra laterale per generare l'analisi!")
+from google.genai import errors
+
+def analyze_report_with_gemini(ticker, pdf_text):
+    api_key = st.secrets.get("GEMINI_API_KEY")
+    if not api_key:
+        st.error("⚠️ Nessuna GEMINI_API_KEY trovata nei Secrets di Streamlit!")
+        return None
+
+    client = genai.Client(api_key=api_key)
+
+    prompt = f"""
+    Esegui l'analisi di Forensic Accounting per la società con ticker: {ticker}.
+    Ecco il testo estratto dai documenti finanziari/trimestrali forniti:
+
+    --- INIZIO DOCUMENTI ---
+    {pdf_text[:120000]}
+    --- FINE DOCUMENTI ---
+
+    Calcola ed estrai rigorosamente l'EPS Diluito Normalizzato TTM (depurato da componenti straordinarie, non legalmente ricorrenti, o da voci contabili distorsive).
+
+    Restituisci un JSON strutturato esattamente con queste chiavi:
+    {{
+      "normalized_diluted_eps_ttm": float,
+      "forensic_score": float,
+      "quality_of_earnings": "string",
+      "main_red_flag": "string",
+      "summary_verdict": "string",
+      "full_report_markdown": "string"
+    }}
+    """
+
+    try:
+        response = client.models.generate_content(
+            model="gemini-1.5-flash",
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                system_instruction=SYSTEM_INSTRUCTION,
+                response_mime_type="application/json",
+                temperature=0.2,
+            ),
+        )
+        data = json.loads(response.text)
+        return data
+    except errors.APIError as e:
+        st.error(f"Errore API Gemini ({e.code}): {e.message}")
+        return None
+    except Exception as e:
+        st.error(f"Errore durante l'elaborazione dell'analisi: {e}")
+        return None

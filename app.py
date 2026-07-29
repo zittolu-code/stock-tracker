@@ -25,7 +25,6 @@ def load_manual_data():
     if os.path.exists(CSV_FILE):
         try:
             df = pd.read_csv(CSV_FILE)
-            # Verifica che tutte le colonne necessarie esistano, altrimenti ricrea la struttura
             if not all(col in df.columns for col in REQUIRED_COLUMNS):
                 return pd.DataFrame(columns=REQUIRED_COLUMNS)
             return df
@@ -158,7 +157,7 @@ st.markdown(f"### Tabella Trimestrale **{selected_ticker}** - Anno **{selected_y
 # Estrazione dei dati per il Ticker e Anno selezionati
 ticker_year_df = manual_df[(manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year)]
 
-# Se non esistono ancora dati per questo anno e ticker, creiamo le 2 righe base
+# Se non esistono ancora dati per questo anno e ticker, creiamo le righe base
 if ticker_year_df.empty:
     working_df = pd.DataFrame([
         {"Metrica": "Revenue ($B)", "Q1": None, "Q2": None, "Q3": None, "Q4": None},
@@ -167,15 +166,15 @@ if ticker_year_df.empty:
 else:
     working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
 
-st.info("💡 Inserisci i valori di **Revenue ($B)** e **Diluted EPS ($)** nei rispettivi trimestri, poi clicca su **Salva Modifiche**.")
+st.info("💡 Puoi modificare il nome delle **Metriche**, aggiungere nuove righe in fondo alla tabella o inserire i valori per i trimestri (Q1-Q4).")
 
-# Tabella Editor con colonne Q1, Q2, Q3, Q4
+# Tabella Editor con colonna Metrica sbloccata e aggiunta righe dinamica
 edited_df = st.data_editor(
     working_df,
     use_container_width=True,
-    num_rows="fixed",
+    num_rows="dynamic",  # Consente di aggiungere e rimuovere righe
     column_config={
-        "Metrica": st.column_config.TextColumn("Metrica", disabled=True),
+        "Metrica": st.column_config.TextColumn("Metrica", required=True),
         "Q1": st.column_config.NumberColumn("Q1", format="%.2f"),
         "Q2": st.column_config.NumberColumn("Q2", format="%.2f"),
         "Q3": st.column_config.NumberColumn("Q3", format="%.2f"),
@@ -184,6 +183,9 @@ edited_df = st.data_editor(
 )
 
 if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
+    # Filtriamo eventuali righe vuote sulla metrica
+    edited_df = edited_df.dropna(subset=["Metrica"])
+    
     edited_df["Ticker"] = selected_ticker
     edited_df["Anno"] = selected_year
     

@@ -83,7 +83,7 @@ def fetch_detailed_financials(ticker_symbol, freq="Annual"):
     if fin is None or fin.empty:
         return pd.DataFrame()
 
-    df_fin = fin.T  # Trasponiamo per avere le date come righe
+    df_fin = fin.T  # Trasposizione per avere le date come righe
     df_fin.index = pd.to_datetime(df_fin.index).strftime('%Y-%m-%d')
     df_fin = df_fin.sort_index(ascending=True)
 
@@ -95,7 +95,7 @@ def fetch_detailed_financials(ticker_symbol, freq="Annual"):
             extracted["Revenue ($B)"] = df_fin[col] / 1e9
             break
 
-    # Estrazione Diluted EPS (Normalized / Continuing Operations)
+    # Estrazione Diluted EPS
     for col in ["Diluted EPS", "Normalized Diluted EPS", "Diluted NI Availto Com Stock"]:
         if col in df_fin.columns:
             extracted["Diluted EPS ($)"] = df_fin[col]
@@ -154,7 +154,7 @@ if selected_ticker:
     df_detail = fetch_detailed_financials(selected_ticker, freq=freq_key)
     
     if not df_detail.empty:
-        st.markdown(### Storico {selected_ticker} ({freq}))
+        st.markdown(f"### Storico {selected_ticker} ({freq})")
         
         tab1, tab2 = st.tabs(["📊 Grafici Trend", "📄 Tabella Dati"])
         

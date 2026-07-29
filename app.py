@@ -144,10 +144,21 @@ with st.spinner("Recupero panoramica generale da Yahoo Finance..."):
 manual_eps_map = calculate_manual_eps_ttm(st.session_state.manual_df)
 df_summary["EPS Diluito Normalizzato TTM ($)"] = df_summary["Ticker"].map(manual_eps_map)
 
+# Calcolo P/E Normalizzato (Prezzo / EPS Diluito Normalizzato TTM)
+def calculate_pe_normalized(row):
+    price = row.get("Prezzo ($)")
+    eps_norm = row.get("EPS Diluito Normalizzato TTM ($)")
+    if pd.notna(price) and pd.notna(eps_norm) and isinstance(price, (int, float)) and isinstance(eps_norm, (int, float)) and eps_norm > 0:
+        return price / eps_norm
+    return None
+
+df_summary["P/E Normalizzato"] = df_summary.apply(calculate_pe_normalized, axis=1)
+
 # Riordino logico delle colonne
 columns_order = [
     "Azienda", "Ticker", "Prezzo ($)", "Basic EPS TTM ($)", "Diluted EPS TTM ($)", 
-    "EPS Diluito Normalizzato TTM ($)", "P/E", "Market Cap ($B)", "Free Cash Flow ($B)", "FCF/EPS Ratio"
+    "EPS Diluito Normalizzato TTM ($)", "P/E", "P/E Normalizzato", "Market Cap ($B)", 
+    "Free Cash Flow ($B)", "FCF/EPS Ratio"
 ]
 existing_cols = [col for col in columns_order if col in df_summary.columns]
 df_summary = df_summary[existing_cols]
@@ -169,6 +180,7 @@ format_dict = {
     "Diluted EPS TTM ($)": "${:,.2f}",
     "EPS Diluito Normalizzato TTM ($)": "${:,.2f}",
     "P/E": "{:,.2f}",
+    "P/E Normalizzato": "{:,.2f}",
     "Market Cap ($B)": "${:,.2f} B",
     "Free Cash Flow ($B)": "${:,.2f} B",
     "FCF/EPS Ratio": "{:,.2f}"
@@ -216,7 +228,7 @@ if ticker_year_df.empty:
 else:
     working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
 
-st.info("💡 Modifica i valori o aggiungi nuove metriche. Salva per aggiornare istantaneamente il TTM nella tabella in alto.")
+st.info("💡 Modifica i valori o aggiungi nuove metriche. Salva per aggiornare istantaneamente TTM e P/E Normalizzato nella tabella in alto.")
 
 edited_df = st.data_editor(
     working_df,
@@ -239,12 +251,12 @@ if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
     # Rimuoviamo i vecchi record per lo stesso Ticker e Anno
     other_records = manual_df[~((manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year))]
     
-    # Uniamo, salviamo su disk e aggiorniamo il session_state
+    # Uniamo, salviamo su disco e aggiorniamo il session_state
     updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)
     save_manual_data(updated_full_df)
     st.session_state.manual_df = updated_full_df
     
-    st.success(f"Dati di {selected_ticker} ({selected_year}) salvati! Tabella TTM aggiornata.")
+    st.success(f"Dati di {selected_ticker} ({selected_year}) salvati! Tabella TTM e P/E Normalizzato aggiornati.")
     st.rerun()
 
 # --- ASSISTENTE GEMINI ---
@@ -269,7 +281,7 @@ else:
                 prompt = f"""
                 Sei un analista finanziario esperto. 
                 
-                Dati di mercato live e TTM manuali:
+                Dati di mercato live e metriche normalizzate:
                 {context_summary}
                 
                 Dati trimestrali inseriti per {selected_ticker} ({selected_year}):

@@ -11,7 +11,7 @@ st.title("📈 Prossimi Ingressi - Stock Value Tracker")
 # File CSV per il salvataggio dei dati manuali
 CSV_FILE = "dati_manuali.csv"
 
-TICKERS = [
+DEFAULT_TICKERS = [
     "NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", 
     "MA", "PLTR", "SAP", "CRM", "ISRG", "NOW", "MELI", "RACE", "O", 
     "OKE", "NBIS", "CRWV", "CMG", "LDO.MI", "CRCL", "LYSCF", "IREN", 
@@ -39,27 +39,55 @@ def save_manual_data(df):
 if "manual_df" not in st.session_state:
     st.session_state.manual_df = load_manual_data()
 
+# --- GESTIONE LISTA TICKERS IN SESSION STATE ---
+if "tickers" not in st.session_state:
+    # Recupera eventuali ticker unici già presenti nel file CSV e unisci a quelli di default
+    csv_tickers = []
+    if not st.session_state.manual_df.empty and "Ticker" in st.session_state.manual_df.columns:
+        csv_tickers = st.session_state.manual_df["Ticker"].dropna().unique().tolist()
+    
+    combined_tickers = sorted(list(set(DEFAULT_TICKERS + csv_tickers)))
+    st.session_state.tickers = combined_tickers
+
+# --- MODULO AGGIUNGI NUOVO TICKER ---
+with st.expander("➕ Aggiungi un nuovo Ticker alla lista"):
+    col_add1, col_add2 = st.columns([3, 1])
+    with col_add1:
+        new_ticker_input = st.text_input("Inserisci il simbolo del Ticker (es. AAPL, TSLA):", key="new_ticker_input")
+    with col_add2:
+        st.write("") # Spaziatura verticale per allineare il bottone
+        st.write("")
+        if st.button("Aggiungi Ticker"):
+            clean_ticker = new_ticker_input.strip().upper()
+            if clean_ticker:
+                if clean_ticker not in st.session_state.tickers:
+                    st.session_state.tickers.append(clean_ticker)
+                    st.session_state.tickers = sorted(st.session_state.tickers)
+                    st.success(f"Ticker '{clean_ticker}' aggiunto con successo!")
+                    st.rerun()
+                else:
+                    st.warning(f"Il ticker '{clean_ticker}' è già presente nella lista.")
+            else:
+                st.error("Inserisci un ticker valido.")
+
 # --- CALCOLO DINAMICO TTM PER OGNI TICKER ---
 def calculate_manual_eps_ttm(df):
     eps_ttm_map = {}
     if df.empty:
         return eps_ttm_map
 
-    # Filtra qualsiasi riga la cui Metrica contenga la parola 'EPS'
     eps_rows = df[df["Metrica"].astype(str).str.contains("EPS", case=False, na=False)].copy()
 
-    for ticker in TICKERS:
+    for ticker in st.session_state.tickers:
         ticker_data = eps_rows[eps_rows["Ticker"] == ticker]
         if ticker_data.empty:
             continue
 
-        # Converti Anno in numerico e ordina dal più recente
         ticker_data["Anno"] = pd.to_numeric(ticker_data["Anno"], errors="coerce")
         ticker_data = ticker_data.sort_values(by="Anno", ascending=False)
 
         collected_quarters = []
         for _, row in ticker_data.iterrows():
-            # Scorri i trimestri dal più recente Q4 al Q1
             for q in ["Q4", "Q3", "Q2", "Q1"]:
                 val = row[q]
                 if pd.notna(val) and str(val).strip() != "":
@@ -73,7 +101,6 @@ def calculate_manual_eps_ttm(df):
             if len(collected_quarters) == 4:
                 break
 
-        # Se sono stati trovati esattamente 4 trimestri, calcola il TTM
         if len(collected_quarters) == 4:
             eps_ttm_map[ticker] = sum(collected_quarters)
 
@@ -133,7 +160,7 @@ def fetch_summary_data(ticker_list):
     return df_raw.dropna(how='all', axis=1)
 
 with st.spinner("Recupero panoramica generale da Yahoo Finance..."):
-    df_summary = fetch_summary_data(TICKERS)
+    df_summary = fetch_summary_data(st.session_state.tickers)
 
 # Inserimento dinamico della colonna TTM calcolata dai dati manuali aggiornati
 manual_eps_map = calculate_manual_eps_ttm(st.session_state.manual_df)
@@ -159,7 +186,7 @@ def calculate_fcf_eps_ratio(row):
 
 df_summary["FCF/EPS Ratio"] = df_summary.apply(calculate_fcf_eps_ratio, axis=1)
 
-# Riordino logico delle colonne (rimuoviamo la colonna ausiliaria FCF_per_share dalla visualizzazione)
+# Riordino logico delle colonne
 columns_order = [
     "Azienda", "Ticker", "Prezzo ($)", "Basic EPS TTM ($)", "Diluted EPS TTM ($)", 
     "EPS Diluito Normalizzato TTM ($)", "P/E", "P/E Normalizzato", "Market Cap ($B)", 
@@ -207,7 +234,7 @@ st.subheader("✍️ Inserimento Dati Trimestrali per Anno")
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    selected_ticker = st.selectbox("Seleziona Ticker:", TICKERS)
+    selected_ticker = st.selectbox("Seleziona Ticker:", st.session_state.tickers)
 
 manual_df = st.session_state.manual_df
 if not manual_df.empty and "Anno" in manual_df.columns:

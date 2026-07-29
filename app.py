@@ -18,13 +18,21 @@ TICKERS = [
     "TYL", "FIG", "MARA"
 ]
 
-# --- GESTIONE DATI MANUALLI ---
+REQUIRED_COLUMNS = ["Ticker", "Anno", "Metrica", "Q1", "Q2", "Q3", "Q4"]
+
+# --- GESTIONE DATI MANUALI ROBUSTA ---
 def load_manual_data():
     if os.path.exists(CSV_FILE):
-        return pd.read_csv(CSV_FILE)
+        try:
+            df = pd.read_csv(CSV_FILE)
+            # Verifica che tutte le colonne necessarie esistano, altrimenti ricrea la struttura
+            if not all(col in df.columns for col in REQUIRED_COLUMNS):
+                return pd.DataFrame(columns=REQUIRED_COLUMNS)
+            return df
+        except Exception:
+            return pd.DataFrame(columns=REQUIRED_COLUMNS)
     else:
-        # Schema: Ticker, Anno, Metric, Q1, Q2, Q3, Q4
-        return pd.DataFrame(columns=["Ticker", "Anno", "Metrica", "Q1", "Q2", "Q3", "Q4"])
+        return pd.DataFrame(columns=REQUIRED_COLUMNS)
 
 def save_manual_data(df):
     df.to_csv(CSV_FILE, index=False)
@@ -132,8 +140,13 @@ col1, col2 = st.columns([2, 1])
 with col1:
     selected_ticker = st.selectbox("Seleziona Ticker:", TICKERS)
 
-# Recupero gli anni già esistenti nel dataset o imposto anni di default
-existing_years = sorted(st.session_state.manual_df["Anno"].dropna().unique().astype(int).tolist(), reverse=True)
+# Recupero gli anni esistenti nel dataframe
+manual_df = st.session_state.manual_df
+if not manual_df.empty and "Anno" in manual_df.columns:
+    existing_years = sorted(manual_df["Anno"].dropna().unique().astype(int).tolist(), reverse=True)
+else:
+    existing_years = []
+
 default_years = [2026, 2025, 2024]
 all_years = sorted(list(set(existing_years + default_years)), reverse=True)
 
@@ -143,10 +156,9 @@ with col2:
 st.markdown(f"### Tabella Trimestrale **{selected_ticker}** - Anno **{selected_year}**")
 
 # Estrazione dei dati per il Ticker e Anno selezionati
-full_df = st.session_state.manual_df
-ticker_year_df = full_df[(full_df["Ticker"] == selected_ticker) & (full_df["Anno"] == selected_year)]
+ticker_year_df = manual_df[(manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year)]
 
-# Se non esistono ancora dati per questo anno e ticker, creiamo la struttura base
+# Se non esistono ancora dati per questo anno e ticker, creiamo le 2 righe base
 if ticker_year_df.empty:
     working_df = pd.DataFrame([
         {"Metrica": "Revenue ($B)", "Q1": None, "Q2": None, "Q3": None, "Q4": None},
@@ -155,13 +167,13 @@ if ticker_year_df.empty:
 else:
     working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
 
-st.info("💡 Inserisci i valori di **Revenue ($B)** e **Diluted EPS ($)** per ogni trimestre dell'anno selezionato, poi clicca su **Salva Modifiche**.")
+st.info("💡 Inserisci i valori di **Revenue ($B)** e **Diluted EPS ($)** nei rispettivi trimestri, poi clicca su **Salva Modifiche**.")
 
 # Tabella Editor con colonne Q1, Q2, Q3, Q4
 edited_df = st.data_editor(
     working_df,
     use_container_width=True,
-    num_rows="fixed", # Mantiene le 2 righe fisse (Revenue ed EPS)
+    num_rows="fixed",
     column_config={
         "Metrica": st.column_config.TextColumn("Metrica", disabled=True),
         "Q1": st.column_config.NumberColumn("Q1", format="%.2f"),
@@ -172,12 +184,11 @@ edited_df = st.data_editor(
 )
 
 if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
-    # Aggiungiamo Ticker e Anno ai dati modificati
     edited_df["Ticker"] = selected_ticker
     edited_df["Anno"] = selected_year
     
-    # Rimuoviamo il vecchio record per questo Ticker e Anno se esisteva
-    other_records = full_df[~((full_df["Ticker"] == selected_ticker) & (full_df["Anno"] == selected_year))]
+    # Rimuoviamo eventuali record precedenti per Ticker + Anno
+    other_records = manual_df[~((manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year))]
     
     # Uniamo e salviamo
     updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)

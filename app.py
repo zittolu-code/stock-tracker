@@ -99,13 +99,8 @@ def fetch_summary_data(ticker_list):
             eps_trailing = info.get("trailingEps")
 
             fcf_per_share = None
-            fcf_eps_ratio = None
-            
             if isinstance(fcf, (int, float)) and isinstance(shares_outstanding, (int, float)) and shares_outstanding > 0:
                 fcf_per_share = fcf / shares_outstanding
-                
-            if isinstance(fcf_per_share, (int, float)) and isinstance(eps_trailing, (int, float)) and eps_trailing > 0:
-                fcf_eps_ratio = fcf_per_share / eps_trailing
 
             mc_billion = (market_cap / 1e9) if isinstance(market_cap, (int, float)) else None
             fcf_billion = (fcf / 1e9) if isinstance(fcf, (int, float)) else None
@@ -119,7 +114,7 @@ def fetch_summary_data(ticker_list):
                 "P/E": pe if isinstance(pe, (int, float)) else None,
                 "Market Cap ($B)": mc_billion,
                 "Free Cash Flow ($B)": fcf_billion,
-                "FCF/EPS Ratio": fcf_eps_ratio
+                "FCF_per_share": fcf_per_share
             })
         except Exception:
             data_list.append({
@@ -131,7 +126,7 @@ def fetch_summary_data(ticker_list):
                 "P/E": None,
                 "Market Cap ($B)": None,
                 "Free Cash Flow ($B)": None,
-                "FCF/EPS Ratio": None
+                "FCF_per_share": None
             })
             
     df_raw = pd.DataFrame(data_list)
@@ -154,7 +149,17 @@ def calculate_pe_normalized(row):
 
 df_summary["P/E Normalizzato"] = df_summary.apply(calculate_pe_normalized, axis=1)
 
-# Riordino logico delle colonne
+# Calcolo FCF/EPS Ratio basato sull'EPS Diluito Normalizzato TTM ($)
+def calculate_fcf_eps_ratio(row):
+    fcf_ps = row.get("FCF_per_share")
+    eps_norm = row.get("EPS Diluito Normalizzato TTM ($)")
+    if pd.notna(fcf_ps) and pd.notna(eps_norm) and isinstance(fcf_ps, (int, float)) and isinstance(eps_norm, (int, float)) and eps_norm > 0:
+        return fcf_ps / eps_norm
+    return None
+
+df_summary["FCF/EPS Ratio"] = df_summary.apply(calculate_fcf_eps_ratio, axis=1)
+
+# Riordino logico delle colonne (rimuoviamo la colonna ausiliaria FCF_per_share dalla visualizzazione)
 columns_order = [
     "Azienda", "Ticker", "Prezzo ($)", "Basic EPS TTM ($)", "Diluted EPS TTM ($)", 
     "EPS Diluito Normalizzato TTM ($)", "P/E", "P/E Normalizzato", "Market Cap ($B)", 
@@ -228,7 +233,7 @@ if ticker_year_df.empty:
 else:
     working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
 
-st.info("💡 Modifica i valori o aggiungi nuove metriche. Salva per aggiornare istantaneamente TTM e P/E Normalizzato nella tabella in alto.")
+st.info("💡 Modifica i valori o aggiungi nuove metriche. Salva per aggiornare istantaneamente TTM, P/E Normalizzato e FCF/EPS Ratio nella tabella in alto.")
 
 edited_df = st.data_editor(
     working_df,
@@ -256,7 +261,7 @@ if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
     save_manual_data(updated_full_df)
     st.session_state.manual_df = updated_full_df
     
-    st.success(f"Dati di {selected_ticker} ({selected_year}) salvati! Tabella TTM e P/E Normalizzato aggiornati.")
+    st.success(f"Dati di {selected_ticker} ({selected_year}) salvati! Tabella aggiornata.")
     st.rerun()
 
 # --- ASSISTENTE GEMINI ---

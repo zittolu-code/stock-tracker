@@ -1,11 +1,15 @@
+import os
+import pandas as pd
 import streamlit as st
 import yfinance as yf
-import pandas as pd
 from google import genai
 
 st.set_page_config(page_title="Stock Value Tracker", layout="wide")
 
 st.title("📈 Prossimi Ingressi - Stock Value Tracker")
+
+# File per la memorizzazione dei dati manuali
+CSV_FILE = "dati_manuali.csv"
 
 # Elenco completo dei Ticker
 TICKERS = [
@@ -15,7 +19,23 @@ TICKERS = [
     "TYL", "FIG", "MARA"
 ]
 
-if st.button("🔄 Aggiorna Dati Live"):
+# --- FUNZIONI DI GESTIONE MEMORIZZAZIONE MANUALE ---
+def load_manual_data():
+    if os.path.exists(CSV_FILE):
+        return pd.read_csv(CSV_FILE)
+    else:
+        # Schema iniziale vuoto se il file non esiste
+        return pd.DataFrame(columns=["Ticker", "Periodo", "Data/Riferimento", "Revenue ($B)", "Diluted EPS ($)"])
+
+def save_manual_data(df):
+    df.to_csv(CSV_FILE, index=False)
+
+# Inizializzazione dello Stato Locale
+if "manual_df" not in st.session_state:
+    st.session_state.manual_df = load_manual_data()
+
+# --- RECOVERY DATI LIVE DA YAHOO (PER TABELLA PRINCIPALE) ---
+if st.button("🔄 Aggiorna Dati Live Yahoo"):
     st.cache_data.clear()
 
 @st.cache_data(ttl=3600)
@@ -72,42 +92,11 @@ def fetch_summary_data(ticker_list):
     df_raw = pd.DataFrame(data_list)
     return df_raw.dropna(how='all', axis=1)
 
-@st.cache_data(ttl=3600)
-def fetch_detailed_financials(ticker_symbol, freq="Annual"):
-    stock = yf.Ticker(ticker_symbol)
-    if freq == "Quarterly":
-        fin = stock.quarterly_financials
-    else:
-        fin = stock.financials
-
-    if fin is None or fin.empty:
-        return pd.DataFrame()
-
-    df_fin = fin.T  # Trasposizione per avere le date come righe
-    df_fin.index = pd.to_datetime(df_fin.index).strftime('%Y-%m-%d')
-    df_fin = df_fin.sort_index(ascending=True)
-
-    extracted = pd.DataFrame(index=df_fin.index)
-
-    # Estrazione Revenue
-    for col in ["Total Revenue", "Operating Revenue"]:
-        if col in df_fin.columns:
-            extracted["Revenue ($B)"] = df_fin[col] / 1e9
-            break
-
-    # Estrazione Diluted EPS
-    for col in ["Diluted EPS", "Normalized Diluted EPS", "Diluted NI Availto Com Stock"]:
-        if col in df_fin.columns:
-            extracted["Diluted EPS ($)"] = df_fin[col]
-            break
-
-    return extracted
-
 with st.spinner("Recupero panoramica generale da Yahoo Finance..."):
     df_summary = fetch_summary_data(TICKERS)
 
 # --- TABELLA PRINCIPALE ---
-st.subheader("📋 Panoramica Titoli")
+st.subheader("📋 Panoramica Titoli Live")
 
 def highlight_fcf_ratio(val):
     if pd.isna(val) or val is None:
@@ -136,52 +125,73 @@ else:
 
 st.dataframe(styled_df, use_container_width=True)
 
-# --- SEZIONE DI DETTAGLIO PER TICKER ---
+# --- SEZIONE INSERIMENTO E ANALISI MANUALE PER TICKER ---
 st.markdown("---")
-st.subheader("🔍 Scheda di Dettaglio Aziendale")
+st.subheader("✍️ Gestione e Inserimento Dati Manuali")
 
 col_select1, col_select2 = st.columns([2, 1])
 
 with col_select1:
-    selected_ticker = st.selectbox("Seleziona un Ticker per analizzare i dettagli:", TICKERS)
+    selected_ticker = st.selectbox("Seleziona un Ticker su cui lavorare:", TICKERS)
 
 with col_select2:
     freq = st.radio("Periodo di analisi:", ["Anno", "Trimestre"], horizontal=True)
 
-freq_key = "Quarterly" if freq == "Trimestre" else "Annual"
-
 if selected_ticker:
-    df_detail = fetch_detailed_financials(selected_ticker, freq=freq_key)
+    st.markdown(f"### Dati Storici Inseriti: **{selected_ticker}** ({freq})")
     
-    if not df_detail.empty:
-        st.markdown(f"### Storico {selected_ticker} ({freq})")
+    # Filtriamo il dataframe globale per il ticker e il periodo selezionati
+    full_df = st.session_state.manual_df
+    filtered_df = full_df[(full_df["Ticker"] == selected_ticker) & (full_df["Periodo"] == freq)].copy()
+    
+    # Rimuoviamo colonne non necessarie alla vista singola
+    working_df = filtered_df[["Data/Riferimento", "Revenue ($B)", "Diluted EPS ($)"]].reset_index(drop=True)
+
+    tab_edit, tab_chart = st.tabs(["📝 Modifica / Inserisci Dati", "📊 Grafici Trend"])
+
+    with tab_edit:
+        st.info("💡 Puoi inserire nuovi dati direttamente nella tabella o modificare quelli esistenti. Clicca su **Salva Modifiche** per memorizzarli permanentemente.")
         
-        tab1, tab2 = st.tabs(["📊 Grafici Trend", "📄 Tabella Dati"])
-        
-        with tab1:
+        # Data Editor interattivo
+        edited_df = st.data_editor(
+            working_df,
+            num_rows="dynamic", # Permette di aggiungere/rimuovere righe
+            use_container_width=True,
+            column_config={
+                "Data/Riferimento": st.column_config.TextColumn("Data / Periodo (es. 2024, Q1 2024)", required=True),
+                "Revenue ($B)": st.column_config.NumberColumn("Revenue ($B)", format="$%.2f B"),
+                "Diluted EPS ($)": st.column_config.NumberColumn("Diluted EPS ($)", format="$%.2f"),
+            }
+        )
+
+        if st.button("💾 Salva Modifiche per " + selected_ticker):
+            # Ricostruiamo i metadati per il salvare nel CSV globale
+            edited_df["Ticker"] = selected_ticker
+            edited_df["Periodo"] = freq
+            
+            # Rimuoviamo i vecchi record per questo Ticker + Periodo e inseriamo i nuovi
+            other_records = full_df[~((full_df["Ticker"] == selected_ticker) & (full_df["Periodo"] == freq))]
+            updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)
+            
+            # Salviamo su file e in session state
+            save_manual_data(updated_full_df)
+            st.session_state.manual_df = updated_full_df
+            st.success(f"Dati per {selected_ticker} ({freq}) memorizzati con successo!")
+            st.rerun()
+
+    with tab_chart:
+        if not working_df.empty and working_df["Data/Riferimento"].notna().any():
+            chart_df = working_df.set_index("Data/Riferimento")
             col_g1, col_g2 = st.columns(2)
             
             with col_g1:
-                if "Revenue ($B)" in df_detail.columns:
-                    st.markdown("**Revenue (Fatturato in $B)**")
-                    st.bar_chart(df_detail["Revenue ($B)"])
-                else:
-                    st.info("Dati Revenue non disponibili per questo periodo.")
-                    
+                st.markdown("**Revenue (Fatturato in $B)**")
+                st.bar_chart(chart_df["Revenue ($B)"])
             with col_g2:
-                if "Diluted EPS ($)" in df_detail.columns:
-                    st.markdown("**EPS Diluito ($)**")
-                    st.line_chart(df_detail["Diluted EPS ($)"])
-                else:
-                    st.info("Dati EPS Diluito non disponibili per questo periodo.")
-
-        with tab2:
-            st.dataframe(df_detail.style.format({
-                "Revenue ($B)": "${:,.2f} B",
-                "Diluted EPS ($)": "${:,.2f}"
-            }, na_rep="N/A"), use_container_width=True)
-    else:
-        st.warning(f"Nessun dato storico finanziario disponibile per {selected_ticker}.")
+                st.markdown("**EPS Diluito ($)**")
+                st.line_chart(chart_df["Diluted EPS ($)"])
+        else:
+            st.warning("Nessun dato valido inserito per generare i grafici.")
 
 # --- ASSISTENTE GEMINI ---
 st.markdown("---")
@@ -192,7 +202,7 @@ api_key = st.secrets.get("GEMINI_API_KEY")
 if not api_key:
     st.info("💡 Per attivare l'assistente, inserisci la tua GEMINI_API_KEY nei Secrets di Streamlit Cloud.")
 else:
-    user_prompt = st.text_input(f"Fai una domanda su {selected_ticker} o sull'intera lista (es: 'Confronta il fatturato di {selected_ticker} con i competitor'):")
+    user_prompt = st.text_input(f"Fai una domanda su {selected_ticker} o sui dati inseriti:")
     
     if st.button("✨ Chiedi a Gemini") and user_prompt:
         with st.spinner("Gemini sta analizzando i dati..."):
@@ -200,18 +210,18 @@ else:
                 client = genai.Client(api_key=api_key)
                 
                 context_summary = df_summary.to_csv(index=False)
-                context_detail = df_detail.to_csv() if 'df_detail' in locals() and not df_detail.empty else "Nessun dettaglio aggiuntivo"
+                context_manual = working_df.to_csv(index=False) if 'working_df' in locals() else "Nessun dato manuale inserito."
                 
                 prompt = f"""
                 Sei un analista finanziario esperto. 
                 
-                Ecco la panoramica generale di mercato:
+                Dati di mercato live:
                 {context_summary}
                 
-                Ecco i dettagli storici dell'azienda selezionata ({selected_ticker}):
-                {context_detail}
+                Dati storici inseriti dall'utente per {selected_ticker}:
+                {context_manual}
                 
-                Rispondi in modo sintetico e professionale alla seguente richiesta dell'utente:
+                Rispondi in modo sintetico alla richiesta:
                 {user_prompt}
                 """
                 

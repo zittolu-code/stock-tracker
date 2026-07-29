@@ -8,10 +8,9 @@ st.set_page_config(page_title="Stock Value Tracker", layout="wide")
 
 st.title("📈 Prossimi Ingressi - Stock Value Tracker")
 
-# File per la memorizzazione dei dati manuali
+# File CSV per il salvataggio dei dati manuali
 CSV_FILE = "dati_manuali.csv"
 
-# Elenco completo dei Ticker
 TICKERS = [
     "NVDA", "GOOGL", "MSFT", "AMZN", "BABA", "META", "AMD", "V", "ASML", 
     "MA", "PLTR", "SAP", "CRM", "ISRG", "NOW", "MELI", "RACE", "O", 
@@ -19,22 +18,21 @@ TICKERS = [
     "TYL", "FIG", "MARA"
 ]
 
-# --- FUNZIONI DI GESTIONE MEMORIZZAZIONE MANUALE ---
+# --- GESTIONE DATI MANUALLI ---
 def load_manual_data():
     if os.path.exists(CSV_FILE):
         return pd.read_csv(CSV_FILE)
     else:
-        # Schema iniziale vuoto se il file non esiste
-        return pd.DataFrame(columns=["Ticker", "Periodo", "Data/Riferimento", "Revenue ($B)", "Diluted EPS ($)"])
+        # Schema: Ticker, Anno, Metric, Q1, Q2, Q3, Q4
+        return pd.DataFrame(columns=["Ticker", "Anno", "Metrica", "Q1", "Q2", "Q3", "Q4"])
 
 def save_manual_data(df):
     df.to_csv(CSV_FILE, index=False)
 
-# Inizializzazione dello Stato Locale
 if "manual_df" not in st.session_state:
     st.session_state.manual_df = load_manual_data()
 
-# --- RECOVERY DATI LIVE DA YAHOO (PER TABELLA PRINCIPALE) ---
+# --- DATI LIVE YAHOO FINANCE ---
 if st.button("🔄 Aggiorna Dati Live Yahoo"):
     st.cache_data.clear()
 
@@ -125,73 +123,69 @@ else:
 
 st.dataframe(styled_df, use_container_width=True)
 
-# --- SEZIONE INSERIMENTO E ANALISI MANUALE PER TICKER ---
+# --- INSERIMENTO DATI PER ANNO E TRIMESTRI (Q1-Q4) ---
 st.markdown("---")
-st.subheader("✍️ Gestione e Inserimento Dati Manuali")
+st.subheader("✍️ Inserimento Dati Trimestrali per Anno")
 
-col_select1, col_select2 = st.columns([2, 1])
+col1, col2 = st.columns([2, 1])
 
-with col_select1:
-    selected_ticker = st.selectbox("Seleziona un Ticker su cui lavorare:", TICKERS)
+with col1:
+    selected_ticker = st.selectbox("Seleziona Ticker:", TICKERS)
 
-with col_select2:
-    freq = st.radio("Periodo di analisi:", ["Anno", "Trimestre"], horizontal=True)
+# Recupero gli anni già esistenti nel dataset o imposto anni di default
+existing_years = sorted(st.session_state.manual_df["Anno"].dropna().unique().astype(int).tolist(), reverse=True)
+default_years = [2026, 2025, 2024]
+all_years = sorted(list(set(existing_years + default_years)), reverse=True)
 
-if selected_ticker:
-    st.markdown(f"### Dati Storici Inseriti: **{selected_ticker}** ({freq})")
+with col2:
+    selected_year = st.selectbox("Seleziona o Aggiungi Anno:", all_years)
+
+st.markdown(f"### Tabella Trimestrale **{selected_ticker}** - Anno **{selected_year}**")
+
+# Estrazione dei dati per il Ticker e Anno selezionati
+full_df = st.session_state.manual_df
+ticker_year_df = full_df[(full_df["Ticker"] == selected_ticker) & (full_df["Anno"] == selected_year)]
+
+# Se non esistono ancora dati per questo anno e ticker, creiamo la struttura base
+if ticker_year_df.empty:
+    working_df = pd.DataFrame([
+        {"Metrica": "Revenue ($B)", "Q1": None, "Q2": None, "Q3": None, "Q4": None},
+        {"Metrica": "Diluted EPS ($)", "Q1": None, "Q2": None, "Q3": None, "Q4": None}
+    ])
+else:
+    working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
+
+st.info("💡 Inserisci i valori di **Revenue ($B)** e **Diluted EPS ($)** per ogni trimestre dell'anno selezionato, poi clicca su **Salva Modifiche**.")
+
+# Tabella Editor con colonne Q1, Q2, Q3, Q4
+edited_df = st.data_editor(
+    working_df,
+    use_container_width=True,
+    num_rows="fixed", # Mantiene le 2 righe fisse (Revenue ed EPS)
+    column_config={
+        "Metrica": st.column_config.TextColumn("Metrica", disabled=True),
+        "Q1": st.column_config.NumberColumn("Q1", format="%.2f"),
+        "Q2": st.column_config.NumberColumn("Q2", format="%.2f"),
+        "Q3": st.column_config.NumberColumn("Q3", format="%.2f"),
+        "Q4": st.column_config.NumberColumn("Q4", format="%.2f"),
+    }
+)
+
+if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
+    # Aggiungiamo Ticker e Anno ai dati modificati
+    edited_df["Ticker"] = selected_ticker
+    edited_df["Anno"] = selected_year
     
-    # Filtriamo il dataframe globale per il ticker e il periodo selezionati
-    full_df = st.session_state.manual_df
-    filtered_df = full_df[(full_df["Ticker"] == selected_ticker) & (full_df["Periodo"] == freq)].copy()
+    # Rimuoviamo il vecchio record per questo Ticker e Anno se esisteva
+    other_records = full_df[~((full_df["Ticker"] == selected_ticker) & (full_df["Anno"] == selected_year))]
     
-    # Rimuoviamo colonne non necessarie alla vista singola
-    working_df = filtered_df[["Data/Riferimento", "Revenue ($B)", "Diluted EPS ($)"]].reset_index(drop=True)
-
-    tab_edit, tab_chart = st.tabs(["📝 Modifica / Inserisci Dati", "📊 Grafici Trend"])
-
-    with tab_edit:
-        st.info("💡 Puoi inserire nuovi dati direttamente nella tabella o modificare quelli esistenti. Clicca su **Salva Modifiche** per memorizzarli permanentemente.")
-        
-        # Data Editor interattivo
-        edited_df = st.data_editor(
-            working_df,
-            num_rows="dynamic", # Permette di aggiungere/rimuovere righe
-            use_container_width=True,
-            column_config={
-                "Data/Riferimento": st.column_config.TextColumn("Data / Periodo (es. 2024, Q1 2024)", required=True),
-                "Revenue ($B)": st.column_config.NumberColumn("Revenue ($B)", format="$%.2f B"),
-                "Diluted EPS ($)": st.column_config.NumberColumn("Diluted EPS ($)", format="$%.2f"),
-            }
-        )
-
-        if st.button("💾 Salva Modifiche per " + selected_ticker):
-            # Ricostruiamo i metadati per il salvare nel CSV globale
-            edited_df["Ticker"] = selected_ticker
-            edited_df["Periodo"] = freq
-            
-            # Rimuoviamo i vecchi record per questo Ticker + Periodo e inseriamo i nuovi
-            other_records = full_df[~((full_df["Ticker"] == selected_ticker) & (full_df["Periodo"] == freq))]
-            updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)
-            
-            # Salviamo su file e in session state
-            save_manual_data(updated_full_df)
-            st.session_state.manual_df = updated_full_df
-            st.success(f"Dati per {selected_ticker} ({freq}) memorizzati con successo!")
-            st.rerun()
-
-    with tab_chart:
-        if not working_df.empty and working_df["Data/Riferimento"].notna().any():
-            chart_df = working_df.set_index("Data/Riferimento")
-            col_g1, col_g2 = st.columns(2)
-            
-            with col_g1:
-                st.markdown("**Revenue (Fatturato in $B)**")
-                st.bar_chart(chart_df["Revenue ($B)"])
-            with col_g2:
-                st.markdown("**EPS Diluito ($)**")
-                st.line_chart(chart_df["Diluted EPS ($)"])
-        else:
-            st.warning("Nessun dato valido inserito per generare i grafici.")
+    # Uniamo e salviamo
+    updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)
+    save_manual_data(updated_full_df)
+    st.session_state.manual_df = updated_full_df
+    
+    st.success(f"Dati di {selected_ticker} per l'anno {selected_year} salvati con successo!")
+    st.rerun()
 
 # --- ASSISTENTE GEMINI ---
 st.markdown("---")
@@ -210,7 +204,7 @@ else:
                 client = genai.Client(api_key=api_key)
                 
                 context_summary = df_summary.to_csv(index=False)
-                context_manual = working_df.to_csv(index=False) if 'working_df' in locals() else "Nessun dato manuale inserito."
+                context_manual = working_df.to_csv(index=False)
                 
                 prompt = f"""
                 Sei un analista finanziario esperto. 
@@ -218,10 +212,10 @@ else:
                 Dati di mercato live:
                 {context_summary}
                 
-                Dati storici inseriti dall'utente per {selected_ticker}:
+                Dati trimestrali per {selected_ticker} ({selected_year}):
                 {context_manual}
                 
-                Rispondi in modo sintetico alla richiesta:
+                Rispondi in modo sintetico alla seguente richiesta:
                 {user_prompt}
                 """
                 

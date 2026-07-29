@@ -39,6 +39,46 @@ def save_manual_data(df):
 if "manual_df" not in st.session_state:
     st.session_state.manual_df = load_manual_data()
 
+# --- CALCOLO DINAMICO TTM PER OGNI TICKER ---
+def calculate_manual_eps_ttm(df):
+    eps_ttm_map = {}
+    if df.empty:
+        return eps_ttm_map
+
+    # Filtra qualsiasi riga la cui Metrica contenga la parola 'EPS'
+    eps_rows = df[df["Metrica"].astype(str).str.contains("EPS", case=False, na=False)].copy()
+
+    for ticker in TICKERS:
+        ticker_data = eps_rows[eps_rows["Ticker"] == ticker]
+        if ticker_data.empty:
+            continue
+
+        # Converti Anno in numerico e ordina dal più recente
+        ticker_data["Anno"] = pd.to_numeric(ticker_data["Anno"], errors="coerce")
+        ticker_data = ticker_data.sort_values(by="Anno", ascending=False)
+
+        collected_quarters = []
+        for _, row in ticker_data.iterrows():
+            # Scorri i trimestri dal più recente Q4 al Q1
+            for q in ["Q4", "Q3", "Q2", "Q1"]:
+                val = row[q]
+                if pd.notna(val) and str(val).strip() != "":
+                    try:
+                        num_val = float(val)
+                        collected_quarters.append(num_val)
+                        if len(collected_quarters) == 4:
+                            break
+                    except ValueError:
+                        continue
+            if len(collected_quarters) == 4:
+                break
+
+        # Se sono stati trovati esattamente 4 trimestri, calcola il TTM
+        if len(collected_quarters) == 4:
+            eps_ttm_map[ticker] = sum(collected_quarters)
+
+    return eps_ttm_map
+
 # --- DATI LIVE YAHOO FINANCE ---
 if st.button("🔄 Aggiorna Dati Live Yahoo"):
     st.cache_data.clear()
@@ -100,6 +140,18 @@ def fetch_summary_data(ticker_list):
 with st.spinner("Recupero panoramica generale da Yahoo Finance..."):
     df_summary = fetch_summary_data(TICKERS)
 
+# Inserimento dinamico della colonna TTM calcolata dai dati manuali aggiornati
+manual_eps_map = calculate_manual_eps_ttm(st.session_state.manual_df)
+df_summary["EPS Diluito Normalizzato TTM ($)"] = df_summary["Ticker"].map(manual_eps_map)
+
+# Riordino logico delle colonne
+columns_order = [
+    "Azienda", "Ticker", "Prezzo ($)", "Basic EPS TTM ($)", "Diluted EPS TTM ($)", 
+    "EPS Diluito Normalizzato TTM ($)", "P/E", "Market Cap ($B)", "Free Cash Flow ($B)", "FCF/EPS Ratio"
+]
+existing_cols = [col for col in columns_order if col in df_summary.columns]
+df_summary = df_summary[existing_cols]
+
 # --- TABELLA PRINCIPALE ---
 st.subheader("📋 Panoramica Titoli Live")
 
@@ -115,6 +167,7 @@ format_dict = {
     "Prezzo ($)": "${:,.2f}",
     "Basic EPS TTM ($)": "${:,.2f}",
     "Diluted EPS TTM ($)": "${:,.2f}",
+    "EPS Diluito Normalizzato TTM ($)": "${:,.2f}",
     "P/E": "{:,.2f}",
     "Market Cap ($B)": "${:,.2f} B",
     "Free Cash Flow ($B)": "${:,.2f} B",
@@ -139,7 +192,6 @@ col1, col2 = st.columns([2, 1])
 with col1:
     selected_ticker = st.selectbox("Seleziona Ticker:", TICKERS)
 
-# Recupero gli anni esistenti nel dataframe
 manual_df = st.session_state.manual_df
 if not manual_df.empty and "Anno" in manual_df.columns:
     existing_years = sorted(manual_df["Anno"].dropna().unique().astype(int).tolist(), reverse=True)
@@ -154,10 +206,8 @@ with col2:
 
 st.markdown(f"### Tabella Trimestrale **{selected_ticker}** - Anno **{selected_year}**")
 
-# Estrazione dei dati per il Ticker e Anno selezionati
 ticker_year_df = manual_df[(manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year)]
 
-# Se non esistono ancora dati per questo anno e ticker, creiamo le righe base
 if ticker_year_df.empty:
     working_df = pd.DataFrame([
         {"Metrica": "Revenue ($B)", "Q1": None, "Q2": None, "Q3": None, "Q4": None},
@@ -166,13 +216,12 @@ if ticker_year_df.empty:
 else:
     working_df = ticker_year_df[["Metrica", "Q1", "Q2", "Q3", "Q4"]].reset_index(drop=True)
 
-st.info("💡 Puoi modificare il nome delle **Metriche**, aggiungere nuove righe in fondo alla tabella o inserire i valori per i trimestri (Q1-Q4).")
+st.info("💡 Modifica i valori o aggiungi nuove metriche. Salva per aggiornare istantaneamente il TTM nella tabella in alto.")
 
-# Tabella Editor con colonna Metrica sbloccata e aggiunta righe dinamica
 edited_df = st.data_editor(
     working_df,
     use_container_width=True,
-    num_rows="dynamic",  # Consente di aggiungere e rimuovere righe
+    num_rows="dynamic",
     column_config={
         "Metrica": st.column_config.TextColumn("Metrica", required=True),
         "Q1": st.column_config.NumberColumn("Q1", format="%.2f"),
@@ -183,21 +232,19 @@ edited_df = st.data_editor(
 )
 
 if st.button(f"💾 Salva Modifiche {selected_ticker} ({selected_year})"):
-    # Filtriamo eventuali righe vuote sulla metrica
     edited_df = edited_df.dropna(subset=["Metrica"])
-    
     edited_df["Ticker"] = selected_ticker
     edited_df["Anno"] = selected_year
     
-    # Rimuoviamo eventuali record precedenti per Ticker + Anno
+    # Rimuoviamo i vecchi record per lo stesso Ticker e Anno
     other_records = manual_df[~((manual_df["Ticker"] == selected_ticker) & (manual_df["Anno"] == selected_year))]
     
-    # Uniamo e salviamo
+    # Uniamo, salviamo su disk e aggiorniamo il session_state
     updated_full_df = pd.concat([other_records, edited_df], ignore_index=True)
     save_manual_data(updated_full_df)
     st.session_state.manual_df = updated_full_df
     
-    st.success(f"Dati di {selected_ticker} per l'anno {selected_year} salvati con successo!")
+    st.success(f"Dati di {selected_ticker} ({selected_year}) salvati! Tabella TTM aggiornata.")
     st.rerun()
 
 # --- ASSISTENTE GEMINI ---
@@ -222,10 +269,10 @@ else:
                 prompt = f"""
                 Sei un analista finanziario esperto. 
                 
-                Dati di mercato live:
+                Dati di mercato live e TTM manuali:
                 {context_summary}
                 
-                Dati trimestrali per {selected_ticker} ({selected_year}):
+                Dati trimestrali inseriti per {selected_ticker} ({selected_year}):
                 {context_manual}
                 
                 Rispondi in modo sintetico alla seguente richiesta:
